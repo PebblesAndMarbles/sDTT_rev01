@@ -56,3 +56,17 @@ git commit -m "Initial code/docs backup baseline"
 git remote add origin <your-private-github-repo-url>
 git push -u origin main
 ```
+
+## Regular backup push (code/docs only)
+
+Use the helper script for ongoing syncs:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\backup_push.ps1
+```
+
+Optional custom commit message:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\backup_push.ps1 -Message "Update APC join + docs"
+```
