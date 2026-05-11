@@ -1,0 +1,914 @@
+﻿//!
+Names Default To Here( 1 );
+
+// ============================================================
+// GLOBAL CONFIGURATION AND PATHS
+// ============================================================
+path_1278="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_HCCD_D1V_APC.csv";
+path_1280="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1280sDTT_HCCD_D1V.csv";
+copy_pic_debug = 1;
+copy_button_list_runtime = .;
+copy_layer_boxes_runtime = Associative Array();
+copy_layer_label_boxes_runtime = Associative Array();
+copy_layer_extra_padding = 345;
+
+
+				                rowFBheight=370;
+				                chvfl_height=80;
+				                prod_mop_pilot_height=160;
+
+// Chamber lists keyed by team member (name, chamber_list)
+chamber_data = {
+    {"Trey",    {"AME409_PM1","AME409_PM2","AME409_PM3","AME409_PM4","AME409_PM5","AME409_PM6","AME421_PM3","AME421_PM4"}},
+    {"Kayden",  {"AME403_PM1","AME403_PM2","AME403_PM3","AME403_PM4","AME403_PM5","AME403_PM6","AME421_PM1","AME421_PM2"}},
+    {"Chang",   {"AME401_PM1","AME401_PM2","AME401_PM3","AME401_PM4","AME401_PM5","AME401_PM6","AME423_PM1","AME423_PM2"}},
+    {"Adi",     {"AME403_PM1","AME403_PM2","AME403_PM3","AME403_PM4","AME403_PM5","AME403_PM6","AME421_PM5","AME421_PM6"}},
+    {"Travis",  {"AME405_PM1","AME405_PM2","AME405_PM3","AME405_PM4","AME405_PM5","AME405_PM6","AME423_PM5","AME423_PM6"}},
+    {"Tyler",   {"AME411_PM1","AME411_PM2","AME411_PM3","AME411_PM4","AME411_PM5","AME411_PM6"}},
+    {"Mathius", {"AME417_PM1","AME417_PM2","AME417_PM3","AME417_PM4","AME417_PM5","AME417_PM6","AME423_PM3","AME423_PM4"}},
+    {"Sashank", {"AME419_PM1","AME419_PM2","AME419_PM3","AME419_PM4","AME419_PM5","AME419_PM6"}},
+    {"William", {"AME425_PM1","AME425_PM2","AME425_PM3","AME425_PM4","AME425_PM5","AME425_PM6"}},
+    {"Minog",   {"AME427_PM1","AME427_PM2","AME427_PM3","AME427_PM4","AME427_PM5","AME427_PM6"}}
+};
+
+Append_Copy_Button = Function({config, layer_name, button_label, copy_target, debug_tag},
+    copy_button_list = config["copy_button_list"];
+    If( !Is Scriptable( copy_button_list ),
+        copy_button_list = copy_button_list_runtime;
+    );
+
+    If( !Is Scriptable( copy_button_list ),
+        Return();
+    );
+
+    If( !Is Scriptable( copy_layer_boxes_runtime ),
+        copy_layer_boxes_runtime = Associative Array();
+    );
+    If( !Is Scriptable( copy_layer_label_boxes_runtime ),
+        copy_layer_label_boxes_runtime = Associative Array();
+    );
+
+    layer_key = Uppercase( Trim( Char( layer_name ) ) );
+    layer_keys = copy_layer_boxes_runtime << Get Keys;
+
+    If( !Contains( layer_keys, layer_key ),
+        layer_button_box = V List Box();
+        layer_container_box = V List Box(
+            layer_button_box,
+            Spacer Box( Size( 1, copy_layer_extra_padding ) )
+        );
+        copy_button_list << Append(
+            Outline Box( layer_key, layer_container_box )
+        );
+        copy_layer_boxes_runtime[layer_key] = layer_button_box;
+    );
+
+    layer_button_box = copy_layer_boxes_runtime[layer_key];
+    If( !Contains( copy_layer_label_boxes_runtime << Get Keys, layer_key ),
+        copy_layer_label_boxes_runtime[layer_key] = Associative Array();
+    );
+    layer_labels = copy_layer_label_boxes_runtime[layer_key];
+    label_key = Uppercase( Trim( Char( button_label ) ) );
+    If( Contains( layer_labels << Get Keys, label_key ),
+        Return();
+    );
+    layer_labels[label_key] = 1;
+    Eval(
+        Eval Expr(
+            Expr( layer_button_box ) << Append(
+                Button Box( Expr( button_label ),
+                    copy_status = "unknown";
+                    Try(
+                        Expr( copy_target ) << Copy Picture;
+                        copy_status = "copied";
+                    ,
+                        copy_status = "fallback_copy_target";
+                        Expr( copy_target ) << Copy Picture;
+                    );
+                    If( copy_pic_debug == 1,
+                        Print( "COPY DEBUG [" || Expr( debug_tag ) || "] layer=" || Expr( layer_key ) || " button=" || Expr( button_label ) || " copy_status=" || copy_status );
+                    );
+                )
+            )
+        )
+    );
+);
+
+// ============================================================
+// FORMATTING FUNCTIONS
+// ============================================================
+Format_Trend_Charts = Function({trend_chart_object, type, config},
+    // Extract values from config associative array
+    recent_limits_mdttucl = config["recent_limits_mdttucl"];
+    recent_limits_mdttcl = config["recent_limits_mdttcl"];
+    recent_limits_mdttlcl = config["recent_limits_mdttlcl"];
+    recent_limits_sdttucl = config["recent_limits_sdttucl"];
+    recent_limits_sdttcl = config["recent_limits_sdttcl"];
+    recent_limits_sdttlcl = config["recent_limits_sdttlcl"];
+    legendcol1 = config["legendcol1"];
+    //legendcol2 = config["legendcol2"];
+    UCL_COLOR = config["UCL_COLOR"];
+    CL_COLOR = config["CL_COLOR"];
+    LCL_COLOR = config["LCL_COLOR"];
+    ucl_label = config["ucl_label"];
+    cl_label = config["cl_label"];
+    lcl_label = config["lcl_label"];
+    yinc = config["yinc"];
+    tinc = config["tinc"];
+    val_show_splines = config["show_splines"];
+    tech_str = config["tech_str"];
+
+    Treports = trend_chart_object << Report;
+    j=0;
+    
+    If(type=="ALL",
+        rpt=Treports;
+//        rpt[Frame Box(1)] << Row Legend(:TEST_NAME, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:APC_PRODGROUP, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:PRODUCT_GROUP, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:ALLSTATS_STANDARD_FLAG, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:STATISTICS_MEAN_DTT_STANDARD_FLAG, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:STATISTICS_MEAN_DTT_VIOLATED_RULE_NOTATION, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:STATISTICS_SIGMA_DTT_STANDARD_FLAG, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:STATISTICS_SIGMA_DTT_VIOLATED_RULE_NOTATION, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));		
+//        rpt[Frame Box(1)] << Row Legend(:SCANNER, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:ROUTE_TYPE, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:LOT_TYPE, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:IS_POR, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:APC_FB_SUC, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:APC_AREA, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:SPC_PILOT_NAME, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+
+        rpt[1][Frame Box(1)] << {Marker Drawing Mode("Outlined")};
+		rpt[AxisBox(1)] << Axis Settings({Min(-3), Max(3), Inc(yinc),Minor Ticks(1)});
+
+        rpt << Set Title( "ALL LAYERS" );	
+    ,
+        For Each( {rpt}, Treports,
+            j=j+1;
+            current_by_value = rpt << Get Title;
+
+            rpt[1][Frame Box(1)]  << Row Legend(Column( legendcol1 ),Color( 0 ),Color Theme( "" ),Marker( 0 ),Marker Theme( "" ),Continuous Scale( 0 ),Reverse Scale( 0 ),Excluded Rows( 0 ));
+            //rpt[1][Frame Box(1)]  << Row Legend(Column( legendcol2 ),Color( 0 ),Color Theme( "" ),Marker( 0 ),Marker Theme( "" ),Continuous Scale( 0 ),Reverse Scale( 0 ),Excluded Rows( 0 ));
+
+            rpt[1][Frame Box(1)] << {Marker Drawing Mode("Outlined")};
+            
+            // Find positions of "of " and " By"
+            of_pos = Contains(current_by_value, "of ");
+            by_pos = Contains(current_by_value, " By ");
+
+            // Extract Y column name between "of " and " By"
+            y_col_name = Substr(current_by_value, of_pos + 3, by_pos - of_pos - 3);
+            layer_value = Word(-1, current_by_value, "=");
+            y_col_display = Substitute(y_col_name, "_", " ");
+            
+            If(type!="APC",
+                new_title = y_col_display || " " || tech_str || " HCCD NEST " || layer_value;
+
+                If(type=="MEAN",
+                    rpt[AxisBox(1)] << Add Ref Line( recent_limits_mdttucl[layer_value], "Solid", UCL_COLOR, ucl_label);
+                    rpt[AxisBox(1)] << Add Ref Line( recent_limits_mdttcl[layer_value], "Solid", CL_COLOR, cl_label);
+                    rpt[AxisBox(1)] << Add Ref Line( recent_limits_mdttlcl[layer_value], "Solid", LCL_COLOR, lcl_label );
+                    rpt[AxisBox(1)] << Axis Settings({Min(1.1*recent_limits_mdttlcl[layer_value]), Max(1.1*recent_limits_mdttucl[layer_value]), Inc(yinc),Minor Ticks(1)});
+                ); 
+                    
+                If(type=="SIGMA",
+                    rpt[AxisBox(1)] << Add Ref Line( recent_limits_sdttucl[layer_value], "Solid", UCL_COLOR, ucl_label);
+                    rpt[AxisBox(1)] << Add Ref Line( recent_limits_sdttcl[layer_value], "Solid", CL_COLOR, cl_label);
+                    rpt[AxisBox(1)] << Add Ref Line( recent_limits_sdttlcl[layer_value], "Solid", LCL_COLOR, lcl_label );
+                    rpt[AxisBox(1)] << Axis Settings({Min(1.1*recent_limits_sdttlcl[layer_value]), Max(1.1*recent_limits_sdttucl[layer_value]), Inc(yinc),Minor Ticks(1)});		
+                ); 
+            ,
+                new_title = y_col_display || " " || layer_value;
+            );
+
+            rpt[ScaleBox(1)] << {
+                Interval("Week"), 
+                Inc(tinc),
+                Minor Ticks(0),
+                Label Row({
+                    Label Orientation("Angled"),
+                    Show Major Grid(1),
+                    Show Minor Grid(1)
+                })
+            };		
+
+            rpt << Set Title( new_title );	
+
+            If(val_show_splines == 1, rpt[BorderBox(3)] << Visibility("Collapse"));
+            rpt[FrameBox(1)]  <<Set Height( rowFBheight ); rpt[FrameBox(1)]  <<Set Width( 500 );
+
+            // Add per-layer copy button for trend charts.
+            // Temporarily collapse all ButtonBox controls via Dispatch, copy target, then restore.
+            Try(
+                copy_target = .;
+                copy_target_source = "none";
+                Try(
+                    Try(
+                        copy_target = rpt[OutlineBox(1)];
+                        copy_target_source = "OutlineBox(1)";
+                    );
+                );
+                If( !Is Scriptable( copy_target ),
+                    Try(
+                        copy_target = rpt[OutlineBox(2)];
+                        copy_target_source = "OutlineBox(2)";
+                    );
+                );
+                If( !Is Scriptable( copy_target ),
+                    Try(
+                        copy_target = rpt[ListBox(2)];
+                        copy_target_source = "ListBox(2)";
+                    );
+                );
+                If( !Is Scriptable( copy_target ),
+                    Try(
+                        copy_target = rpt[FrameBox(1)];
+                        copy_target_source = "FrameBox(1)";
+                    );
+                );
+                button_label = If( type == "MEAN", "TrendMEAN", "TrendAPC" );
+                Append_Copy_Button( config, layer_value, button_label, copy_target, "Trend" );
+            );
+        );
+    );
+    
+	axisbox = rpt[axis box( 1 )]; axisbox << Show Major Grid( 1 );axisbox << Show Minor Grid( 1 );
+    axisbox = rpt[axis box( 2 )]; axisbox << Show Major Grid( 1 );axisbox << Show Minor Grid( 1 );
+	
+);	
+
+Format_Variability_Charts = Function({var_chart_object, stat, type, xcol, config,vcol, button_label_override},
+
+    // Extract values from config associative array
+    recent_limits_mdttucl = config["recent_limits_mdttucl"];
+    recent_limits_mdttcl = config["recent_limits_mdttcl"];
+    recent_limits_mdttlcl = config["recent_limits_mdttlcl"];
+    recent_limits_sdttucl = config["recent_limits_sdttucl"];
+    recent_limits_sdttcl = config["recent_limits_sdttcl"];
+    recent_limits_sdttlcl = config["recent_limits_sdttlcl"];
+    UCL_COLOR = config["UCL_COLOR"];
+    CL_COLOR = config["CL_COLOR"];
+    LCL_COLOR = config["LCL_COLOR"];
+    ucl_label = config["ucl_label"];
+    cl_label = config["cl_label"];
+    lcl_label = config["lcl_label"];
+    ymin = config["ymin"];
+    ymax = config["ymax"];
+    yinc = config["yinc"];
+    varchart_group_width = config["varchart_group_width"];
+    tech_str = config["tech_str"];
+    button_label = button_label_override;
+            
+    Vreports=var_chart_object << Report;
+    j=0;
+            
+    Vreports=var_chart_object << Report;
+    j=0;
+    For Each( {rpt}, Vreports,
+        j=j+1;
+        current_by_value = rpt << Get Title;
+
+        rpt[1][Frame Box(1)] << {Marker Drawing Mode("Outlined")};
+
+        // Extract SPC_STATISTIC value (after "SPC_STATISTIC=" at the end)
+        wec_layer = Word(-1, current_by_value, "=");
+        rpt[1][OutlineBox(2)] << Set Title (wec_layer);
+
+        rpt[1][OutlineBox(1)] << Set Title ("ANALYSIS");
+        
+        axisbox = rpt[1][axis box( 1 )]; axisbox << Show Major Grid( 1 );axisbox << Show Minor Grid( 1 );
+        axisbox = rpt[1][axis box( 2 )]; axisbox << Show Major Grid( 1 );axisbox << Show Minor Grid( 1 );
+    
+        axisbox = rpt[axis box( 1 )]; axisbox << Show Major Grid( 1 ); axisbox << Show Minor Grid( 1 );
+        axisbox = rpt[axis box( 2 )]; axisbox << Show Major Grid( 1 ); axisbox << Show Minor Grid( 1 );
+    
+        mySegs=rpt[FrameBox(1)]<< find segs;
+        Filter Each({seg},(mySegs), (seg<< class name)=="BoxPlotSeg") << Set Line Color("Black");
+        mySegs=rpt[FrameBox(1)]<< find segs;
+        Filter Each({seg},(mySegs), (seg<< class name)=="BoxPlotSeg") << Set Line Color("Black");
+        If(type=="DTT",	
+            If(stat=="MEAN",				
+                rpt << Set Title( tech_str || " MEAN DTT HCCD NEST" );
+                rpt[AxisBox(1)] << Add Ref Line( recent_limits_mdttucl[wec_layer], "Solid", UCL_COLOR, ucl_label);
+                rpt[AxisBox(1)] << Add Ref Line( recent_limits_mdttcl[wec_layer], "Solid", CL_COLOR, cl_label);
+                rpt[AxisBox(1)] << Add Ref Line( recent_limits_mdttlcl[wec_layer], "Solid", LCL_COLOR, lcl_label );
+                rpt[AxisBox(1)] << Axis Settings({Min(1.1*recent_limits_mdttlcl[wec_layer]), Max(1.1*recent_limits_mdttucl[wec_layer]), Inc(yinc),Minor Ticks(0),Label Orientation("Angled")});
+            ); 
+                
+            If(stat=="SIGMA",
+                rpt << Set Title( tech_str || " SIGMA DTT HCCD NEST" );
+                rpt[AxisBox(1)] << Axis Settings({Min(ymin), Max(ymax), Inc(yinc),Minor Ticks(0)});
+                rpt[AxisBox(1)] << Add Ref Line( recent_limits_sdttucl[wec_layer], "Solid", UCL_COLOR, ucl_label);
+                rpt[AxisBox(1)] << Add Ref Line( recent_limits_sdttcl[wec_layer], "Solid", CL_COLOR, cl_label);
+                rpt[AxisBox(1)] << Add Ref Line( recent_limits_sdttlcl[wec_layer], "Solid", LCL_COLOR, lcl_label );
+                rpt[AxisBox(1)] << Axis Settings({Min(1.1*recent_limits_sdttlcl[wec_layer]), Max(1.1*recent_limits_sdttucl[wec_layer]), Inc(yinc),Minor Ticks(0)});			
+            ); 
+            
+            varchart_groups=rpt[AxisBox(2)] << Get Max;
+            varchart_width=varchart_groups*varchart_group_width*.6;
+            framebox=rpt[FrameBox(1)];
+            framebox   <<Set Width( varchart_width );
+            framebox << Get Size;
+            
+            // Determine AxisBox(2) height based on vcol and number of X grouping levels.
+            // framebox height = rowFBheight - axisbox2_height keeps total chart height consistent.
+            If(vcol == "PROD_MOP_PILOT",
+                axisbox2_height = If(xcol == 2, prod_mop_pilot_height + chvfl_height, prod_mop_pilot_height);
+                rpt[AxisBox(2)] << Axis Settings({Label Orientation("Angled")});
+            ,
+                axisbox2_height = If(xcol == 2, chvfl_height * 2, chvfl_height);
+            );
+            varchart_axisbox = rpt[AxisBox(2)];
+            varchart_axisbox << Set Height(axisbox2_height);
+            framebox << Set Height(rowFBheight +18- axisbox2_height);
+
+            If(xcol == 2,
+                // Single chamber - use XPath with the wec_layer value
+                target_textbox = rpt << XPath("(//OutlineBox[text()='ANALYSIS']//OutlineBox[text()='" || wec_layer || "']//TextBox)[2]");
+                If(N Items(target_textbox) > 0,
+                    target_textbox[1] << Set Text("");
+                );
+            ,
+                // Multiple chambers - check if TextBox(3) exists before accessing
+                text_boxes = rpt << XPath("//TextBox");
+                If(N Items(text_boxes) >= 3,
+                    rpt[TextBox(3)] << Set Text("");
+                );
+            );
+            rpt[TextBox(2)] << Set Text("");
+
+            // Add per-layer copy button for DTT variability charts.
+            Try(
+                copy_target = .;
+                copy_target_source = "none";
+                Try(
+                    Try(
+                        copy_target = rpt[OutlineBox(1)];
+                        copy_target_source = "OutlineBox(1)";
+                    );
+                );
+                If( !Is Scriptable( copy_target ),
+                    Try(
+                        copy_target = rpt[OutlineBox(2)];
+                        copy_target_source = "OutlineBox(2)";
+                    );
+                );
+                If( !Is Scriptable( copy_target ),
+                    Try(
+                        copy_target = rpt[ListBox(2)];
+                        copy_target_source = "ListBox(2)";
+                    );
+                );
+                If( !Is Scriptable( copy_target ),
+                    Try(
+                        copy_target = rpt[FrameBox(1)];
+                        copy_target_source = "FrameBox(1)";
+                    );
+                );
+                Append_Copy_Button( config, wec_layer, button_label, copy_target, "Var" );
+            );
+
+            
+        , //ELSE TYPE == TARGET
+            If(stat=="MEAN",
+                rpt << Set Title( tech_str || " MEAN TARGET HCCD NEST" );
+            ); 
+                
+            If(type=="SIGMA",
+                rpt << Set Title( tech_str || " SIGMA TARGET HCCD NEST" );
+            ); 
+            
+            varchart_groups=rpt[AxisBox(2)] << Get Max;
+            varchart_width=varchart_groups*varchart_group_width*0.6;
+            framebox=rpt[FrameBox(1)];
+            framebox   <<Set Width( varchart_width );
+            
+            varchart_axisbox=rpt[AxisBox(2)];			
+            varchart_axisbox <<Set Height( prod_mop_pilot_height );
+            framebox <<Set Height( 228 );
+
+            // Add per-layer copy button for TARGET variability charts (e.g., MEAN TARGET fifth column).
+            Try(
+                copy_target = .;
+                copy_target_source = "none";
+                Try(
+                    Try(
+                        copy_target = rpt[OutlineBox(1)];
+                        copy_target_source = "OutlineBox(1)";
+                    );
+                );
+                If( !Is Scriptable( copy_target ),
+                    Try(
+                        copy_target = rpt[OutlineBox(2)];
+                        copy_target_source = "OutlineBox(2)";
+                    );
+                );
+                If( !Is Scriptable( copy_target ),
+                    Try(
+                        copy_target = rpt[ListBox(2)];
+                        copy_target_source = "ListBox(2)";
+                    );
+                );
+                If( !Is Scriptable( copy_target ),
+                    Try(
+                        copy_target = rpt[FrameBox(1)];
+                        copy_target_source = "FrameBox(1)";
+                    );
+                );
+                button_label = "VarTAR";
+                Append_Copy_Button( config, wec_layer, button_label, copy_target, "Var" );
+            );
+        ); 
+    );
+);
+
+// ============================================================
+// MAIN DATA PROCESSING FUNCTION
+// ============================================================
+ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, chamber_list, selected_member, val_include_sigma, val_no_splines, val_dataset, val_apc_suc_only, val_include_full_history, dlg_win},
+    
+    // Derive dataset label for use in titles
+    tech_str = If(val_dataset == 1, "1278", "1280");
+
+    // Configuration object
+    config = Associative Array();
+    config["window_title"] = tech_str || " HCCD SDTT Report";
+    config["varchart_group_width"] = 40;
+    config["LIMIT_COLOR"] = "Black";
+    config["vcol1"] = "CHAMBER";	
+    config["vcol2"] = "PROD_MOP_PILOT";
+    config["vcol3"] = "PROD_MOP_PILOT";
+    config["bycol1"] = "WEC_LAYER";		
+    config["xcol"] = "DATA_COLLECTION_TIME";		
+    config["legendcol1"] = "CHAMBER";		
+    //config["legendcol2"] = "PRODUCT_GROUP";
+    config["title"] = "SDTT";	
+    config["ycol0"] = "ALLSTATS_MEAN_DTT_VALUE";	
+    config["ycol1"] = "APC_B_TOOL";	
+    config["ycol2"] = "ALLSTATS_SIGMA_DTT_VALUE";
+    config["ycol3"] = "ALLSTATS_MEAN_TARGET_VALUE";
+    config["ycol4"] = "ALLSTATS_SIGMA_TARGET_VALUE";
+    config["filter_str"] = "SMP SDTT";
+    config["UZ1_COLOR"] = "Blue";
+    config["uz1_label"] = "UZ1";
+    config["UCL_COLOR"] = "Red";
+    config["ucl_label"] = "UCL";
+    config["CL_COLOR"] = "Black";
+    config["cl_label"] = "";
+    config["LCL_COLOR"] = "Red";
+    config["lcl_label"] = "LCL";
+    config["LZ1_COLOR"] = "Blue";
+    config["lz1_label"] = "LZ1";
+    config["ymin"] = -1.5;
+    config["ymax"] = 1.5;
+    config["tinc"] = If( val_include_full_history == 1, 2, 1 );
+    config["yinc"] = 0.2;
+    config["jittered"] = 0;
+    config["show_splines"] = 1 - val_no_splines;
+    config["tech_str"] = tech_str;
+
+    // Select path based on dataset radio selection (1=1278 APC, 2=1280)
+    path = If(val_dataset == 1, path_1278, path_1280);
+
+    // Apply close reports/windows BEFORE opening new data.
+    // Use a manual loop instead of Close All("Reports") so the input dialog survives.
+    If(val_cb_close_reports_and_windows == 1,
+        For Each({win_obj}, Get Window List(),
+            If(win_obj != dlg_win,
+                Try(win_obj << Close Window("NoSave"));
+            );
+        );
+        Close All("Data Tables", "NoSave");
+    );
+
+    dt = Open(path); 
+    dt = Current Data Table();
+
+    // DATA TYPE PROCESSING
+    If(val_data_type != 1,
+        // ALLSTATS selected - use ALLSTATS columns
+        config["ycol0"] = "ALLSTATS_MEAN_DTT_VALUE";
+        config["ycol2"] = "ALLSTATS_SIGMA_DTT_VALUE";
+        data_type_str = "ALLSTATS";
+    ,
+        // SPC selected - use STATISTICS columns and filter data
+        config["ycol0"] = "STATISTICS_MEAN_DTT_VALUE";
+        config["ycol2"] = "STATISTICS_SIGMA_DTT_VALUE";
+        data_type_str = "SPC";
+        
+        // Delete rows where ALLSTATS_DYNWAFER != "DYNWAFER_001"
+        dt << Select Where(:ALLSTATS_DYNWAFER != "DYNWAFER_001");
+        dt << Delete Rows;
+        dt << Clear Select;
+    );
+
+    // Filter to APC feedback success rows only (APC_FB_SUC == 1)
+    If(val_apc_suc_only == 1,
+        dt << Select Where(:APC_FB_SUC != 1);
+        dt << Delete Rows;
+        dt << Clear Select;
+    );
+
+    // Default lookback window: keep only latest 45 days unless full history is selected
+    If( val_include_full_history != 1,
+        max_ts = Col Max( :DATA_COLLECTION_TIME );
+        If( !Is Missing( max_ts ),
+            cutoff_ts = max_ts - In Days( 45 );
+            dt << Select Where( Is Missing( :DATA_COLLECTION_TIME ) | :DATA_COLLECTION_TIME < cutoff_ts );
+            dt << Delete Rows;
+            dt << Clear Select;
+        ,
+            Show( "DATA_COLLECTION_TIME has no valid timestamps. Skipping 45-day filter." );
+        );
+    );
+
+    // chamber_list is already set from dialog selection above
+    dt << New Column( "CHAMBER",Character,Set Each Value(If(Contains( chamber_list, :SUBENTITY ),:SUBENTITY,"FLEET")));
+
+    // Color or mark by column
+    dt << Color or Mark by Column(:CHAMBER,Color Theme( "JMP Vibrant"(1) ),Marker Theme( "Solid" ),Continuous Scale( 0 ));
+
+    // Then override FLEET rows to black
+    dt << Select Where(:CHAMBER == "FLEET");
+    dt << Colors(Black);
+    dt << Markers(Dot);
+    dt << Select Where(:CHAMBER != "FLEET");
+
+    // Update window title to replace "Report" with data type
+    updated_window_title = Substitute(config["window_title"], "Report", data_type_str);
+    dt << Set Name(selected_member || " - " || updated_window_title || " Data"); 
+    dt << Set Label Columns( :SPC_LOT );
+
+    // Get the list of unique values from the :WEC_LAYER column to use as keys for initialized Associative Arrays
+    unique_layers = Associative Array( dt:WEC_LAYER ) << Get Keys;	
+    recent_limits_mdttucl= Associative Array();
+    recent_limits_mdttcl= Associative Array();
+    recent_limits_mdttlcl= Associative Array();
+    recent_limits_sdttucl= Associative Array();
+    recent_limits_sdttcl= Associative Array();
+    recent_limits_sdttlcl= Associative Array();
+    
+    For( i = 1, i <= N Items( unique_layers ), i++,
+        current_layer = unique_layers[i];
+        first_row_for_layer = dt << Get Rows Where( :WEC_LAYER == current_layer  & :IS_POR == "True")[1];
+        rows= dt << Get Rows Where( :WEC_LAYER == current_layer & :IS_POR == "True"); 
+        first_row_for_layer=rows[1];
+        recent_limits_mdttucl[current_layer]=dt:STATISTICS_MEAN_DTT_UCL[first_row_for_layer];	
+        recent_limits_mdttcl[current_layer]=dt:STATISTICS_MEAN_DTT_CENTERLINE[first_row_for_layer];	
+        recent_limits_mdttlcl[current_layer]=dt:STATISTICS_MEAN_DTT_LCL[first_row_for_layer];	
+        recent_limits_sdttucl[current_layer]=dt:STATISTICS_SIGMA_DTT_UCL[first_row_for_layer];	
+        recent_limits_sdttcl[current_layer]=dt:STATISTICS_SIGMA_DTT_CENTERLINE[first_row_for_layer];	
+        recent_limits_sdttlcl[current_layer]=dt:STATISTICS_SIGMA_DTT_LCL[first_row_for_layer];	
+    );
+
+    // Add limits to config for functions
+    config["recent_limits_mdttucl"] = recent_limits_mdttucl;
+    config["recent_limits_mdttcl"] = recent_limits_mdttcl;
+    config["recent_limits_mdttlcl"] = recent_limits_mdttlcl;
+    config["recent_limits_sdttucl"] = recent_limits_sdttucl;
+    config["recent_limits_sdttcl"] = recent_limits_sdttcl;
+    config["recent_limits_sdttlcl"] = recent_limits_sdttlcl;
+
+    // Extract frequently used config values
+    ycol0 = config["ycol0"];
+    ycol1 = config["ycol1"];
+    ycol2 = config["ycol2"];
+    ycol3 = config["ycol3"];
+    ycol4 = config["ycol4"];
+    vcol1 = config["vcol1"];
+    vcol2 = config["vcol2"];
+    vcol3 = config["vcol3"];
+    bycol1 = config["bycol1"];
+    xcol = config["xcol"];
+    legendcol1 = config["legendcol1"];
+    //legendcol2 = config["legendcol2"];
+    filter_str = config["filter_str"];
+
+    copy_button_list = V List Box();
+    copy_button_panel = Outline Box( "COPY", copy_button_list );
+    config["copy_button_list"] = copy_button_list;
+    config["copy_layer_boxes"] = Associative Array();
+    config["copy_layer_label_boxes"] = Associative Array();
+    copy_button_list_runtime = copy_button_list;
+    copy_layer_boxes_runtime = Associative Array();
+    copy_layer_label_boxes_runtime = Associative Array();
+
+    // Create the main window
+    SDTT_win=New Window(selected_member || " - " || updated_window_title,
+        lb = V List Box(
+            myTitle = "ALL PRODUCTS "||filter_str;
+
+            V List Box(		
+                ///////////////////////////////////////////////////////////////////////////////
+                //INFO BOX ////////////////////////////////////////////////////////////////////
+                ///////////////////////////////////////////////////////////////////////////////	
+                dt << FitGroup(
+                    dt << Distribution(Stack( 1 ),Arrange in Rows( 7 ),
+                        Nominal Distribution(Column( :TEST_NAME ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :LOT_TYPE ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :PRODUCT_GROUP ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :PRODUCT ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :ROUTE_TYPE ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :IS_POR ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Title("LOTS"),SendToReport(Dispatch({},"LOTS",OutlineBox,{Close( 1 )})),
+                    ),
+                            
+                    dt << Distribution(Stack( 1 ),Arrange in Rows( 6 ),
+                        Nominal Distribution(Column( :WEC_LAYER ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :WEC_ALIAS ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :WEC_OPERATION ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :WEC_ENTITY ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :SUBENTITY ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :WEC_RECIPE ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Title("WEC"),SendToReport(Dispatch({},"WEC",OutlineBox,{Close( 1 )})), 
+                    ),
+                
+                    dt << Distribution(Stack( 1 ),Arrange in Rows( 6 ),		
+                        Nominal Distribution(Column( :SPC_ALIAS ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),			
+                        Nominal Distribution(Column( :SPC_OPERATION ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :PRIMARY_ENTITY ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :ANALYTICAL_ENTITY ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :SPC_RECIPE ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :ALLSTATS_STANDARD_FLAG ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),			
+                        Nominal Distribution(Column( :STATISTICS_MEAN_DTT_STANDARD_FLAG ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),			
+                        Nominal Distribution(Column( :STATISTICS_PERCENT_MEASURED_STANDARD_FLAG ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),			
+                        Nominal Distribution(Column( :STATISTICS_SIGMA_DTT_STANDARD_FLAG ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),			
+                        Nominal Distribution(Column( :STATISTICS_WAFER_MEAN_STANDARD_FLAG ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),			
+                        Nominal Distribution(Column( :STATISTICS_WAFER_PERCENT_OOS_STANDARD_FLAG ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),			
+                        Nominal Distribution(Column( :STATISTICS_WAFER_SIGMA_STANDARD_FLAG ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),			
+                        Title("SPC"), ,SendToReport(Dispatch({},"SPC",OutlineBox,{Close( 1 )})), 
+                    ),
+                    SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "DISTRIBUTIONS" ), Close ( 0 ) })), <<{Arrange in Rows( 3 )}
+                );,
+
+                ///////////////////////////////////////////////////////////////////////////////
+                //SUM TREND AND VAR CHART FIT GROUPS///////////////////////////////////////////
+                ///////////////////////////////////////////////////////////////////////////////
+				H List Box(
+					all="ALL";	mean="MEAN";sigma="SIGMA";apc="APC";target="TARGET";dtt="DTT";
+					fg_trend_dtt_mean_all= dt << FitGroup(
+						trend_dtt_mean_all=Bivariate(Y( Column( ycol0)),X( Column ( xcol ) )),
+						SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" DTT"), Close ( 0 ) })),
+					);
+					Format_Trend_Charts(trend_dtt_mean_all,all,config);, 
+					
+					// Add Data Filter
+					dt << Data Filter(	Location( {0, 0} ),	Width( 800 ), Add Filter(	columns( :DATA_COLLECTION_TIME, :CHAMBER )));
+
+				), //H List Box end
+
+
+                H List Box(
+                    copy_button_panel,
+                    fg_trend_dtt_mean= dt << FitGroup(
+                        trend_dtt_mean=Bivariate(Y( Column( ycol0)),X( Column ( xcol ) ),By( Column ( bycol1 )),
+                            GroupBy( Column( legendcol1) ),
+                        ),
+                        SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" DTT BY "||bycol1 ), Close ( 0 ) })),
+                    );
+                    If(val_show_splines == 1, trend_dtt_mean << Fit Spline(0.1, Standardized, {Report( 0 ), Line Width( 0.1)}));
+                    Format_Trend_Charts(trend_dtt_mean,mean,config);, 
+
+                    If(val_dataset == 1,
+                        fg_trend_btool= dt << FitGroup(
+                            trend_btool=Bivariate(Y( Column( ycol1)),X( Column ( xcol ) ),By( Column ( bycol1 )),
+                                GroupBy( Column( legendcol1) ),
+                            ),
+                            SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( apc||" B_TOOL BY "||bycol1 ), Close ( 0 ) })),
+                        );
+                        If(val_show_splines == 1, trend_btool << Fit Spline(0.1, Standardized, {Report( 0 ), Line Width( 0.1)}));
+                        Format_Trend_Charts(trend_btool,apc,config)
+                    );,
+
+                    fg_var_dtt_mean= dt << FitGroup(
+                        var_dtt_mean = dt << Variability Chart(
+                            Y( Column( ycol0) ),X( Column ( vcol1 )),
+                            By ( Column( bycol1)) , Connect Cell Means(1), Show Cell Means(1), Show Box Plots(1)
+                        ),
+                        SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" DTT BY "||bycol1 ), Close ( 0 ) })), 
+                    );
+                    Format_Variability_Charts(var_dtt_mean,mean,dtt,1,config,vcol1,"VarCHAM");,
+                    
+                    If(N Items(chamber_list) == 1,
+                        // Single chamber - use two X columns
+                        fg_var_dtt_mean_prod = dt << FitGroup(
+                            var_dtt_mean_prod = dt << Variability Chart(
+                                Y( Column( ycol0) ),
+                                X( Column( vcol2 ), Column( vcol1 )),
+                                By ( Column( bycol1)) , 
+                                Connect Cell Means(1), 
+                                Show Cell Means(1), 
+                                Show Box Plots(1)
+                            ),
+                            SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" DTT BY "||bycol1 ), Close ( 0 ) })), 
+                        );
+                        Format_Variability_Charts(var_dtt_mean_prod,mean,dtt,2,config,vcol2,"VarPROD");
+                    ,
+                        // Multiple chambers - use single X column (current implementation)
+                        fg_var_dtt_mean_prod = dt << FitGroup(
+                            var_dtt_mean_prod = dt << Variability Chart(
+                                Y( Column( ycol0) ),
+                                X( Column ( vcol2 )),
+                                By ( Column( bycol1)) , 
+                                Connect Cell Means(1), 
+                                Show Cell Means(1), 
+                                Show Box Plots(1)
+                            ),
+                            SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" DTT BY "||bycol1 ), Close ( 0 ) })), 
+                        );
+                        Format_Variability_Charts(var_dtt_mean_prod,mean,dtt,1,config,vcol2,"VarPROD");
+                    );
+                    
+                    fg_var_dtt_mean_tar= dt << FitGroup(
+                        var_dtt_mean_tar = dt << Variability Chart(
+                            Y( Column( ycol3) ),X( Column ( vcol3 )),
+                            By ( Column( bycol1)) , Connect Cell Means(1), Show Cell Means(1), Show Box Plots(1)
+                        ),
+                        SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" TARGET BY "||bycol1 ), Close ( 0 ) })), 
+                    );
+                    Format_Variability_Charts(var_dtt_mean_tar,mean,target,1,config,vcol3,"VarTAR");,
+
+                    If(val_include_sigma == 1,
+                            fg_trend_dtt_sigma= dt << FitGroup(
+                            trend_dtt_sigma=Bivariate(Y( Column( ycol2)),X( Column ( xcol ) ),By( Column ( bycol1 )),
+                                GroupBy( Column( legendcol1) ),
+                            ),
+                            SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( sigma||" DTT BY "||bycol1 ), Close ( 0 ) })),
+                        );
+                        If(val_show_splines == 1, trend_dtt_sigma << Fit Spline(0.1, Standardized, {Report( 0 ), Line Width( 0.1)}));
+                        Format_Trend_Charts(trend_dtt_sigma,sigma,config)
+                    );, 
+
+                    If(val_include_sigma == 1,
+                        fg_var_dtt_sigma= dt << FitGroup(
+                            var_dtt_sigma = dt << Variability Chart(
+                                Y( Column( ycol2) ),X( Column ( vcol1 )),
+                                By ( Column( bycol1)) , Connect Cell Means(1), Show Cell Means(1), Show Box Plots(1)
+                            ),
+                            SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( sigma||" DTT BY "||bycol1 ), Close ( 0 ) })), 
+                        );
+                        Format_Variability_Charts(var_dtt_sigma,sigma,dtt,1,config,vcol1,"VarCHAM")
+                    );,
+                    
+                    If(val_include_sigma == 1,
+                        If(N Items(chamber_list) == 1,
+                            // Single chamber - use two X columns
+                            fg_var_dtt_sigma_prod = dt << FitGroup(
+                                var_dtt_sigma_prod = dt << Variability Chart(
+                                    Y( Column( ycol2) ),
+                                    X( Column( vcol2 ), Column( vcol1 )),
+                                    By ( Column( bycol1)) , 
+                                    Connect Cell Means(1), 
+                                    Show Cell Means(1), 
+                                    Show Box Plots(1)
+                                ),
+                                SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( sigma||" DTT BY "||bycol1 ), Close ( 0 ) })), 
+                            );
+                            Format_Variability_Charts(var_dtt_sigma_prod,sigma,dtt,2,config,vcol2,"VarPROD");
+                        ,
+                            // Multiple chambers - use single X column (current implementation)
+                            fg_var_dtt_sigma_prod = dt << FitGroup(
+                                var_dtt_sigma_prod = dt << Variability Chart(
+                                    Y( Column( ycol2) ),
+                                    X( Column ( vcol2 )),
+                                    By ( Column( bycol1)) , 
+                                    Connect Cell Means(1), 
+                                    Show Cell Means(1), 
+                                    Show Box Plots(1)
+                                ),
+                                SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( sigma||" DTT BY "||bycol1 ), Close ( 0 ) })), 
+                            );
+                            Format_Variability_Charts(var_dtt_sigma_prod,sigma,dtt,1,config,vcol2,"VarPROD");
+                        );
+                        
+                        fg_var_dtt_sigma_tar= dt << FitGroup(
+                            var_dtt_sigma_tar = dt << Variability Chart(
+                                Y( Column( ycol4) ),X( Column ( vcol3 )),
+                                By ( Column( bycol1)) , Connect Cell Means(1), Show Cell Means(1), Show Box Plots(1)
+                            ),
+                            SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( sigma||" TARGET BY "||bycol1 ), Close ( 0 ) })), 
+                        );
+                        Format_Variability_Charts(var_dtt_sigma_tar,sigma,target,1,config,vcol3,"VarTAR")
+                    );,
+                )
+            ), 
+        )		 
+    ); 
+
+    // Then override FLEET rows to black
+    dt << Select Where(:CHAMBER == "FLEET");
+    dt << Colors(Gray);
+    dt << Select Where(:CHAMBER != "FLEET");
+
+    // Maximize the window after creation
+    SDTT_win << Maximize Window;
+
+    Show("Data processing completed for: ", selected_member);
+);
+
+// ============================================================
+// PERSISTENT USER INPUT DIALOG
+// ============================================================
+dialog_window = New Window( "SDTT Report Options", 
+    V List Box(
+        H List Box(
+            Panel Box("Tool Owner",
+                rbChamber = Radio Box( {"Trey", "Kayden", "Chang", "Adi", "Travis", "Tyler", "Mathius", "Sashank", "William", "Minog"} ),
+            ),
+            V List Box(
+                Panel Box("SINGLE CHAMBER OVERRIDE  (supersedes tool owner selection)",
+                    Lineup Box(N Col(7),
+                        Text Box( "AME4" ), ENTITY_TB = Text Edit Box( "", <<Set Width( 25 ) ),
+                        Text Box( "_PM" ), PM_TB = Text Edit Box( "", <<Set Width( 12 ) ),
+                        Spacer Box(Size(10, 10)),
+                        Text Box( "  — or full SUBENTITY:" ), SUBENTITY_TB = Text Edit Box( "", <<Set Width( 100 ) ),
+                    ),
+                ),
+                Panel Box("OPTIONS",
+                    V List Box(
+						cb_close_reports_and_windows = Check Box( "Close Reports & Windows" ),
+                        cb_include_full_history = Check Box( "Include Full History" ),
+                        cb_include_sigma = Check Box( "Include Sigma Charts" ),
+                        cb_no_splines = Check Box( "No Splines" ),
+                        cb_apc_suc_only = Check Box( "APC FB Success Only (APC_FB_SUC=1)" ),
+                    ),
+                ),
+                Panel Box("DATASET",
+                    rbDataset = Radio Box( {"1278 (APC)", "1280"} ),
+                ),
+                Panel Box("DATA TYPE",
+                    rbDataType = Radio Box(
+                        {"SPC (chart points only)","ALLSTATS (all measured wafers)"}
+                    ),
+                ),
+                H List Box(
+                    Button Box( "Generate Report",
+                    // Get current values from dialog
+                    val_cb_close_reports_and_windows = cb_close_reports_and_windows << Get;
+                    val_include_full_history = cb_include_full_history << Get;
+                    val_include_sigma = cb_include_sigma << Get;
+                    val_no_splines = cb_no_splines << Get;
+                    val_apc_suc_only = cb_apc_suc_only << Get;
+                    val_dataset = rbDataset << Get;
+                    val_data_type = rbDataType << Get;
+                    val_chamber_index = rbChamber << Get;
+
+                    // Resolve chamber override
+                    SUBENTITY_STR = Trim(SUBENTITY_TB << Get Text());
+                    If(SUBENTITY_STR != "",
+                        chamber_list = Words(SUBENTITY_STR, ",");
+                        For(i = 1, i <= N Items(chamber_list), i++,
+                            chamber_list[i] = Trim(chamber_list[i]);
+                        );
+                        selected_member = "CUSTOM: " || SUBENTITY_STR;
+                    ,
+                        ENTITY_STR = Trim(ENTITY_TB << Get Text());
+                        PM_STR = Trim(PM_TB << Get Text());
+                        If(ENTITY_STR != "" & PM_STR != "",
+                            CHAMBER_STR = "AME4" || ENTITY_STR || "_PM" || PM_STR;
+                            chamber_list = {};
+                            Insert Into(chamber_list, CHAMBER_STR);
+                            selected_member = "CUSTOM: " || CHAMBER_STR;
+                        ,
+                            chamber_list = chamber_data[val_chamber_index][2];
+                            selected_member = chamber_data[val_chamber_index][1];
+                        );
+                    );
+                    
+                    // Call the data processing function
+                    ProcessSDTTData(val_cb_close_reports_and_windows, val_data_type, chamber_list, selected_member, val_include_sigma, val_no_splines, val_dataset, val_apc_suc_only, val_include_full_history, dialog_window);
+                ),
+                Button Box( "Close Dialog",
+                    dialog_window << Close Window;
+                )
+            ) // H List Box (buttons)
+        ), // V List Box (right column)
+    ), // H List Box (top-level left/right split)
+),
+);
+
+
+// Usage tracking - final version
+log_path = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\backups\sDTT_Chamber_Dispo_log.txt";
+
+track_usage = Function({},
+    Try(
+        timestamp = Char(Today());
+        log_entry = timestamp || " - Script usage" || "\n";
+        
+        // Check if file exists to append or create
+        If(File Exists(log_path),
+            current_content = Load Text File(log_path);
+            new_content = current_content || log_entry;
+            Save Text File(log_path, new_content);
+        ,
+            Save Text File(log_path, log_entry);
+        );
+    ,
+        // Silent fail if there are any issues
+    );
+);
+
+// Call this at the beginning of your main script
+track_usage();

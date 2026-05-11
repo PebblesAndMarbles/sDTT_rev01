@@ -1,0 +1,14 @@
+3861009535 | Closed previous window: Toy Fit Group VList Standalone
+3861009536 | Closed previous table: Toy Standalone Source
+3861009536 | Closed previous table: Toy Standalone Sex M
+3861009536 | Closed previous table: Toy Standalone Sex F
+3861009536 | Opened source rows=40
+3861009536 | Subset source | sex=M | matching rows=22
+3861009536 | Subset created | name=Toy Standalone Sex M | rows=22 | unique sex={"M"}
+3861009536 | Subset source | sex=F | matching rows=18
+3861009536 | Subset created | name=Toy Standalone Sex F | rows=18 | unique sex={"F"}
+3861009536 | Rendered fit-group block | sex=M
+3861009536 | Appended block | sex=M
+3861009536 | Rendered fit-group block | sex=F
+3861009536 | Appended block | sex=F
+3861009538 | COMPLETE

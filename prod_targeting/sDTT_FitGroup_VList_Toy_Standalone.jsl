@@ -1,0 +1,191 @@
+//!
+Names Default To Here( 1 );
+
+// ============================================================
+// Minimal working example extracted from the production pattern:
+// 1) Build separate subset tables per fit group.
+// 2) Create a report window with a root V List Box.
+// 3) Add one H List Box row per subset section.
+// 4) Populate each H List row with one report object.
+// ============================================================
+
+Close_If_Open = Function( {name_text, is_window},
+    If( is_window == 1,
+        Try( Window( name_text ) << Close Window; )
+    ,
+        Try(
+            dt_old = Data Table( name_text );
+            If( Is Scriptable( dt_old ),
+                dt_old << Close Window;
+            );
+        );
+    );
+);
+
+Build_Sex_Subset = Function( {dt_source, sex_value, subset_name},
+    dt_source << Clear Select;
+    Eval( Eval Expr( dt_source << Select Where( :sex == Expr( sex_value ) ) ) );
+
+    dt_subset = dt_source << Subset(
+        Output Table Name( subset_name ),
+        Selected Rows( 1 ),
+        All Columns
+    );
+
+    dt_source << Clear Select;
+    dt_subset;
+);
+
+Style_Variability_Subset = Function( {dt_subset},
+    Try(
+        dt_subset << Color or Mark by Column(
+            :age,
+            Color Theme( "JMP Vibrant"( 1 ) ),
+            Marker Theme( "Filled" ),
+            Continuous Scale( 0 )
+        )
+    );
+);
+
+Rename_FitGroup_Figure_Outlines = Function( {fit_group_obj, group_label},
+    reports_raw = fit_group_obj << Report;
+    If( Is List( reports_raw ),
+        reports = reports_raw,
+        reports = {reports_raw}
+    );
+
+    Print( "=== RENAME DEBUG START ===" );
+    Print( "group_label=" || group_label || " | report_count=" || Char( N Items( reports ) ) );
+
+    For( i = 1, i <= N Items( reports ), i++,
+        _title_before = "<unavailable>";
+        Try( _title_before = Char( reports[i] << Get Title ) );
+        Print( "report[" || Char( i ) || "] title BEFORE: " || _title_before );
+    );
+
+    // In this report tree, report_count can be 1 and OutlineBox(1) is the sex-level FitGroup title.
+    // Rename only child chart nodes by title matching so we do not clobber the top-level section label.
+    If( N Items( reports ) >= 1,
+        _rpt = reports[1];
+        For( _idx = 1, _idx <= 25, _idx++,
+            _ob_title_before = "";
+            _has_outline = 1;
+            Try(
+                _ob_title_before = Char( _rpt[OutlineBox( _idx )] << Get Title );
+            ,
+                _has_outline = 0;
+            );
+
+            If( _has_outline == 0,
+                Continue();
+            );
+
+            Print( "report[1] outline" || Char( _idx ) || " BEFORE: " || _ob_title_before );
+
+            _ob_title_lower = Lowercase( _ob_title_before );
+
+            // Keep top-level sex title unchanged.
+            If( _ob_title_before == group_label,
+                Continue();
+            );
+
+            If( Contains( _ob_title_lower, "variability gauge analysis" ),
+                Try( _rpt[OutlineBox( _idx )] << Set Title( "ANALYSIS" ) );
+            ,
+                If( Contains( _ob_title_lower, "variability chart" ),
+                    Try( _rpt[OutlineBox( _idx )] << Set Title( "VAR CHART" ) );
+                ,
+                    If( Contains( _ob_title_lower, "variability gauge" ),
+                        Try( _rpt[OutlineBox( _idx )] << Set Title( "HEIGHT BY AGE" ) );
+                    ,
+                        If( Contains( _ob_title_lower, "bivariate" ) & Contains( _ob_title_lower, "age" ),
+                            Try( _rpt[OutlineBox( _idx )] << Set Title( "WEIGHT VS AGE" ) );
+                        ,
+                            If( Contains( _ob_title_lower, "bivariate" ) & Contains( _ob_title_lower, "height" ),
+                                Try( _rpt[OutlineBox( _idx )] << Set Title( "WEIGHT VS HEIGHT" ) );
+                            );
+                        );
+                    );
+                );
+            );
+
+            _ob_title_after = "<unavailable>";
+            Try( _ob_title_after = Char( _rpt[OutlineBox( _idx )] << Get Title ) );
+            Print( "report[1] outline" || Char( _idx ) || " AFTER: " || _ob_title_after );
+        );
+    );
+
+    Print( "=== RENAME DEBUG END ===" );
+);
+
+Build_Subset_Row = Function( {dt_subset, dt_var_subset, group_label},
+    Style_Variability_Subset( dt_var_subset );
+
+    row_outline = Outline Box(
+        "Subset " || group_label || " | rows=" || Char( N Rows( dt_subset ) ),
+        V List Box(
+            fit_group = Fit Group(
+                dt_var_subset << Variability Chart(
+                    Y( :height ),
+                    X( :age ),
+                    Variability Analysis( :height, Points Jittered( 1 ), Show Box Plots( 1 ) )
+                ),
+                dt_var_subset << Bivariate(
+                    Y( :weight ),
+                    X( :age )
+                ),
+                dt_subset << Bivariate(
+                    Y( :weight ),
+                    X( :height )
+                ),
+                SendToReport(
+                    Dispatch( {}, "Fit Group", OutlineBox, {Set Title( group_label ), Close( 0 )} )
+                ),
+                <<{Arrange in Rows( 3 )}
+            ),
+            H List Box(
+                Button Box( "Copy Picture",
+                    fit_group << Copy Picture;
+                )
+            )
+        )
+    );
+
+    Try(
+        rpt = fit_group << Report;
+        rpt[FrameBox( 1 )] << Row Legend( :age, Color( 1 ), Marker( 1 ), Continuous Scale( 0 ), Excluded Rows( 0 ) );
+        rpt[FrameBox( 2 )] << Row Legend( :age, Color( 1 ), Marker( 1 ), Continuous Scale( 0 ), Excluded Rows( 0 ) );
+        rpt[FrameBox( 2 )] << {Marker Size( 5 ), Marker Drawing Mode( "Outlined" )};
+    );
+
+    Rename_FitGroup_Figure_Outlines( fit_group, group_label );
+
+    row_outline;
+);
+
+Build_Window = Function( {},
+    Close_If_Open( "MWE FitGroup from Subset Tables", 1 );
+    Close_If_Open( "MWE BigClass Source", 0 );
+    Close_If_Open( "MWE BigClass Sex M", 0 );
+    Close_If_Open( "MWE BigClass Sex F", 0 );
+    Close_If_Open( "MWE BigClass Sex M Variability", 0 );
+    Close_If_Open( "MWE BigClass Sex F Variability", 0 );
+
+    dt_source = Open( "$SAMPLE_DATA/Big Class.jmp" );
+    dt_source << Set Name( "MWE BigClass Source" );
+
+    dt_m = Build_Sex_Subset( dt_source, "M", "MWE BigClass Sex M" );
+    dt_f = Build_Sex_Subset( dt_source, "F", "MWE BigClass Sex F" );
+    dt_m_var = Build_Sex_Subset( dt_source, "M", "MWE BigClass Sex M Variability" );
+    dt_f_var = Build_Sex_Subset( dt_source, "F", "MWE BigClass Sex F Variability" );
+
+    root_v = V List Box();
+
+    root_v << Append( Build_Subset_Row( dt_m, dt_m_var, "sex=M" ) );
+    root_v << Append( Build_Subset_Row( dt_f, dt_f_var, "sex=F" ) );
+
+    win = New Window( "MWE FitGroup from Subset Tables", root_v );
+    win << Maximize Window;
+);
+
+Build_Window();

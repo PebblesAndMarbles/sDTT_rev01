@@ -1,0 +1,176 @@
+//!
+Names Default To Here( 1 );
+
+// ============================================================
+// TOY: Chamber-style by-group Copy Picture probe
+// Purpose:
+// 1) Mirror chamber report architecture: one shared table feeding
+//    multiple fit groups in one lower H List Box row.
+// 2) Use By(:age) as surrogate for By(:WEC_LAYER).
+// 3) Verify copy behavior at pane level vs full-row level.
+//
+// Data source: JMP sample Big Class table.
+// Surrogate by-group: age.
+// ============================================================
+
+debug_log_path = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\prod_targeting\sDTT_ByGroup_CopyPicture_Toy_debug.txt";
+debug_log = "";
+
+Log_Debug = Function( {msg},
+    line = Char( Today() ) || " | " || Char( msg );
+    Print( line );
+    debug_log ||= line || "\!N";
+);
+
+Flush_Debug_Log = Function( {},
+    Try( Save Text File( debug_log_path, debug_log ) );
+);
+
+Close_If_Open = Function( {name_text, is_window},
+    If( is_window == 1,
+        Try(
+            Window( name_text ) << Close Window;
+            Log_Debug( "Closed previous window: " || name_text );
+        )
+    ,
+        Try(
+            dt_old = Data Table( name_text );
+            If( Is Scriptable( dt_old ),
+                dt_old << Close Window;
+                Log_Debug( "Closed previous table: " || name_text );
+            );
+        )
+    );
+);
+
+Style_Table = Function( {dt_ref},
+    Try(
+        dt_ref << Color or Mark by Column(
+            :sex,
+            Color Theme( "JMP Vibrant"( 1 ) ),
+            Marker Theme( "Filled" ),
+            Continuous Scale( 0 )
+        )
+    );
+);
+
+Build_Chamber_Mirror_Row = Function( {dt_work},
+    // Mirrors chamber lower row: separate fit groups laid out as columns.
+    row_box = H List Box(
+        V List Box(
+            fg_trend_weight_height = dt_work << Fit Group(
+                trend_weight_height = Bivariate(
+                    Y( :weight ),
+                    X( :height ),
+                    By( :age ),
+                    GroupBy( :sex )
+                ),
+                SendToReport(
+                    Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "TREND: WEIGHT VS HEIGHT BY AGE" ), Close( 0 )} )
+                )
+            );,
+            H List Box(
+                Button Box( "Copy Picture: Trend Pane",
+                    Log_Debug( "Copy clicked | pane=trend_weight_height" );
+                    fg_trend_weight_height << Copy Picture;
+                )
+            )
+        ),
+
+        V List Box(
+            fg_var_height_sex = dt_work << Fit Group(
+                var_height_sex = dt_work << Variability Chart(
+                    Y( :height ),
+                    X( :sex ),
+                    By( :age ),
+                    Connect Cell Means( 1 ),
+                    Show Cell Means( 1 ),
+                    Show Box Plots( 1 )
+                ),
+                SendToReport(
+                    Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "VAR: HEIGHT BY SEX BY AGE" ), Close( 0 )} )
+                )
+            );,
+            H List Box(
+                Button Box( "Copy Picture: Variability Pane",
+                    Log_Debug( "Copy clicked | pane=var_height_sex" );
+                    fg_var_height_sex << Copy Picture;
+                )
+            )
+        ),
+
+        V List Box(
+            fg_trend_weight_age = dt_work << Fit Group(
+                trend_weight_age = Bivariate(
+                    Y( :height ),
+                    X( :weight ),
+                    By( :age ),
+                    GroupBy( :sex )
+                ),
+                SendToReport(
+                    Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "TREND: HEIGHT VS WEIGHT BY AGE" ), Close( 0 )} )
+                )
+            );,
+            H List Box(
+                Button Box( "Copy Picture: Age Pane",
+                    Log_Debug( "Copy clicked | pane=trend_weight_age" );
+                    fg_trend_weight_age << Copy Picture;
+                )
+            )
+        )
+    );
+
+    Log_Debug( "Rendered chamber-mirror row" );
+    row_box;
+);
+
+Build_Window = Function( {},
+    Close_If_Open( "Toy ByGroup Copy Picture Probe", 1 );
+    Close_If_Open( "Toy ByGroup Copy Picture Source", 0 );
+    Close_If_Open( "Toy ByGroup Copy Picture Working", 0 );
+
+    dt_source = Open( "$SAMPLE_DATA/Big Class.jmp" );
+    dt_source << Set Name( "Toy ByGroup Copy Picture Source" );
+    Log_Debug( "Opened source rows=" || Char( N Rows( dt_source ) ) );
+
+    age_values = Associative Array( dt_source:age ) << Get Keys;
+    age_values = Sort List( age_values );
+
+    // Keep toy compact while preserving same-table behavior.
+    If( N Items( age_values ) > 4,
+        age_values = age_values[1 :: 4];
+    );
+    Log_Debug( "Selected age groups=" || Char( age_values ) );
+
+    dt_source << Clear Select;
+    dt_source << Select Where( !Contains( age_values, :age ) );
+    dt_work = dt_source << Subset(
+        Output Table Name( "Toy ByGroup Copy Picture Working" ),
+        Selected Rows( 0 ),
+        All Columns
+    );
+    dt_source << Clear Select;
+    Log_Debug( "Working table rows=" || Char( N Rows( dt_work ) ) );
+
+    Style_Table( dt_work );
+
+    root_v = V List Box(
+        Text Box( "Chamber-mirror toy: one shared table, three lower-row panes, each pane uses By(age)." ),
+        Text Box( "Use pane buttons to test per-pane copy and row button to test full-row copy." ),
+        Spacer Box( Size( 1, 8 ) ),
+        chamber_mirror_row = Build_Chamber_Mirror_Row( dt_work ),
+        H List Box(
+            Button Box( "Copy Whole Lower Row",
+                Log_Debug( "Copy clicked | target=whole_lower_row" );
+                chamber_mirror_row << Copy Picture;
+            )
+        )
+    );
+
+    win = New Window( "Toy ByGroup Copy Picture Probe", root_v );
+    win << Maximize Window;
+    Log_Debug( "COMPLETE" );
+    Flush_Debug_Log();
+);
+
+Build_Window();

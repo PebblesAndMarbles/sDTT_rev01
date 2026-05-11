@@ -1,0 +1,773 @@
+//!
+Names Default To Here( 1 );
+
+// ============================================================
+// PROD TARGETING REPORT (v1)
+// - Runtime PROD_MOP_PILOT list input
+// - Discrete target-regime filter (any target change boundary)
+// - Two windows: MEAN DTT and WAFER MEAN
+// - 3 chart columns per window:
+//   1) Variability (PROD_MOP_PILOT, SPC_SITE, ALLSTATS_CURRENT_RETICLE)
+//   2) Trend by PROD_MOP_PILOT
+//   3) Trend by SITE_PROD_MOP_PILOT
+// ============================================================
+
+integrated_output_dir = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\";
+path_d1v_apc = integrated_output_dir || "1278sDTT_HCCD_D1V_APC.csv";
+path_f32     = integrated_output_dir || "1278sDTT_HCCD_F32.csv";
+
+debug_log_path = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\prod_targeting\sDTT_Prod_Targeting_Report_debug.txt";
+debug_log = "";
+last_mean_window_title = "";
+last_wafer_window_title = "";
+
+by_col        = "WEC_LAYER";
+time_col      = "DATA_COLLECTION_TIME";
+pilot_col     = "PROD_MOP_PILOT";
+site_col      = "SPC_SITE";
+reticle_col   = "ALLSTATS_CURRENT_RETICLE";
+site_pilot_col = "SITE_PROD_MOP_PILOT";
+
+total_panel_height    = 420;
+trend_frame_width     = 500;
+varchart_group_width  = 40;
+use_uniform_var_width = 0;
+trend_bottom_padding  = 24;
+prod_mop_pilot_height = 160;
+site_height           = 80;
+reticle_height        = 80;
+min_varchart_width    = 120;
+trend_y_pad_pct       = 0.10;
+
+// Grouping label controls for Variability Chart X levels (closest-to-chart is level 3)
+hide_var_group_level_1_label = 1;
+hide_var_group_level_2_label = 1;
+hide_var_group_level_3_label = 1;
+
+UCL_COLOR = "Red";
+CL_COLOR  = "Black";
+LCL_COLOR = "Red";
+ucl_label = "UCL";
+cl_label  = "";
+lcl_label = "LCL";
+
+Log_Debug = Function( {msg},
+    _line = Char( Today() ) || " | " || Char( msg );
+    Print( _line );
+    debug_log ||= _line || "\!N";
+);
+
+Flush_Debug_Log = Function( {},
+    Try( Save Text File( debug_log_path, debug_log ) );
+);
+
+Extract_By_Value = Function( {title_text, by_col_name},
+    label = by_col_name || "=";
+    label_pos = Contains( title_text, label );
+
+    If( label_pos > 0,
+        value_start = label_pos + Length( label );
+        tail = Substr( title_text, value_start );
+        comma_pos = Contains( tail, "," );
+        If( comma_pos > 0,
+            value = Trim( Substr( tail, 1, comma_pos - 1 ) ),
+            value = Trim( tail )
+        );
+        Return( value );
+    );
+
+    Return( Trim( Word( -1, title_text, "=" ) ) );
+);
+
+Build_Limit_Config = Function( {dt},
+    config = Associative Array();
+    recent_limits_mdttucl = Associative Array();
+    recent_limits_mdttcl  = Associative Array();
+    recent_limits_mdttlcl = Associative Array();
+
+    unique_layers = Associative Array( dt:WEC_LAYER ) << Get Keys;
+    Log_Debug( "Building limit config. Distinct layers=" || Char( N Items( unique_layers ) ) );
+
+    For( i = 1, i <= N Items( unique_layers ), i++,
+        current_layer = unique_layers[i];
+        rows = dt << Get Rows Where( :WEC_LAYER == current_layer & :IS_POR == "True" );
+        If( N Items( rows ) == 0,
+            rows = dt << Get Rows Where( :WEC_LAYER == current_layer );
+        );
+
+        If( N Items( rows ) > 0,
+            first_row_for_layer = rows[1];
+            recent_limits_mdttucl[current_layer] = dt:STATISTICS_MEAN_DTT_UCL[first_row_for_layer];
+            recent_limits_mdttcl[current_layer]  = dt:STATISTICS_MEAN_DTT_CENTERLINE[first_row_for_layer];
+            recent_limits_mdttlcl[current_layer] = dt:STATISTICS_MEAN_DTT_LCL[first_row_for_layer];
+            Log_Debug(
+                "LIMITS " || current_layer ||
+                " | UCL=" || Char( recent_limits_mdttucl[current_layer] ) ||
+                " | CL="  || Char( recent_limits_mdttcl[current_layer] ) ||
+                " | LCL=" || Char( recent_limits_mdttlcl[current_layer] )
+            );
+        ,
+            Log_Debug( "LIMITS MISSING SOURCE ROWS FOR LAYER " || current_layer );
+        );
+    );
+
+    config["recent_limits_mdttucl"] = recent_limits_mdttucl;
+    config["recent_limits_mdttcl"]  = recent_limits_mdttcl;
+    config["recent_limits_mdttlcl"] = recent_limits_mdttlcl;
+    config;
+);
+
+Apply_Generic_Y_Padding = Function( {rpt, dt_ref, y_col_name, layer_value},
+    y_col_ref = Column( dt_ref, y_col_name );
+    rows = dt_ref << Get Rows Where( :WEC_LAYER == layer_value );
+
+    If( N Items( rows ) > 0,
+        y_min = .;
+        y_max = .;
+        For( ri = 1, ri <= N Items( rows ), ri++,
+            y_val = Num( y_col_ref[rows[ri]] );
+            If( !Is Missing( y_val ),
+                If( Is Missing( y_min ) | y_val < y_min,
+                    y_min = y_val;
+                );
+                If( Is Missing( y_max ) | y_val > y_max,
+                    y_max = y_val;
+                );
+            );
+        );
+
+        If( Is Missing( y_min ) | Is Missing( y_max ),
+            Return();
+        );
+
+        y_span = y_max - y_min;
+        If( Is Missing( y_span ) | y_span <= 0,
+            y_span = Max( Abs( y_max ) * 0.2, 0.2 );
+        );
+        y_pad = y_span * trend_y_pad_pct;
+        rpt[AxisBox( 1 )] << Axis Settings( {
+            Min( y_min - y_pad ),
+            Max( y_max + y_pad ),
+            Minor Ticks( 1 )
+        } );
+    );
+);
+
+Apply_Mean_DTT_Limits = Function( {rpt, layer_value, limit_config},
+    recent_limits_mdttucl = limit_config["recent_limits_mdttucl"];
+    recent_limits_mdttcl  = limit_config["recent_limits_mdttcl"];
+    recent_limits_mdttlcl = limit_config["recent_limits_mdttlcl"];
+    limit_keys = recent_limits_mdttucl << Get Keys;
+
+    If(
+        Contains( limit_keys, layer_value )
+        & !Is Missing( recent_limits_mdttucl[layer_value] )
+        & !Is Missing( recent_limits_mdttlcl[layer_value] ),
+
+        y_min = recent_limits_mdttlcl[layer_value];
+        y_max = recent_limits_mdttucl[layer_value];
+        y_span = y_max - y_min;
+        If( Is Missing( y_span ) | y_span <= 0,
+            y_span = Max( Abs( y_max ) * 0.2, 0.2 );
+        );
+        y_pad = y_span * trend_y_pad_pct;
+
+        rpt[AxisBox( 1 )] << Add Ref Line( recent_limits_mdttucl[layer_value], "Solid", UCL_COLOR, ucl_label );
+        rpt[AxisBox( 1 )] << Add Ref Line( recent_limits_mdttcl[layer_value],  "Solid", CL_COLOR,  cl_label  );
+        rpt[AxisBox( 1 )] << Add Ref Line( recent_limits_mdttlcl[layer_value], "Solid", LCL_COLOR, lcl_label );
+        rpt[AxisBox( 1 )] << Axis Settings( {
+            Min( y_min - y_pad ),
+            Max( y_max + y_pad ),
+            Minor Ticks( 1 )
+        } );
+        Log_Debug( "REFLINES APPLIED | layer=" || layer_value );
+    ,
+        Log_Debug( "REFLINES MISSING | layer=" || layer_value );
+    );
+);
+
+Parse_Pilot_List = Function( {raw_text},
+    cleaned = Substitute( Char( raw_text ), "\!N", "," );
+    tokens  = Words( cleaned, "," );
+
+    pilots = {};
+    For( i = 1, i <= N Items( tokens ), i++,
+        tok = Trim( tokens[i] );
+        If( tok != "" & !Contains( pilots, tok ),
+            Insert Into( pilots, tok );
+        );
+    );
+
+    pilots;
+);
+
+Parse_Layer_List = Function( {raw_text},
+    tokens = Words( Char( raw_text ), "," );
+    layers = {};
+    For( i = 1, i <= N Items( tokens ), i++,
+        tok = Trim( tokens[i] );
+        If( tok != "" & !Contains( layers, tok ),
+            Insert Into( layers, tok );
+        );
+    );
+    layers;
+);
+
+Build_Site_Prod_Mop_Pilot_Column = Function( {dt},
+    If( Try( Column( dt, site_pilot_col ); 1, 0 ) == 0,
+        dt << New Column( "SITE_PROD_MOP_PILOT", Character );
+    );
+
+    Try( Column( dt, site_pilot_col ) << Delete Formula );
+    n_rows = N Rows( dt );
+    For( i = 1, i <= n_rows, i++,
+        dt:SITE_PROD_MOP_PILOT[i] = Char( dt:SPC_SITE[i] ) || "_" || Char( dt:PROD_MOP_PILOT[i] );
+    );
+    Log_Debug( "Built column SITE_PROD_MOP_PILOT rows=" || Char( n_rows ) );
+);
+
+Apply_Target_Regime_Filter = Function( {dt},
+    // Sort to ensure trailing regime logic follows time order per (pilot, layer)
+    dt << Sort(
+        By( :PROD_MOP_PILOT, :WEC_LAYER, :DATA_COLLECTION_TIME ),
+        Order( Ascending, Ascending, Ascending ),
+        Replace Table,
+        Output Table( "" )
+    );
+
+    // Group key for fast row partitioning
+    If( Try( Column( dt, "TARGET_GROUP_KEY" ); 1, 0 ) == 0,
+        dt << New Column( "TARGET_GROUP_KEY", Character, Formula( Char( :PROD_MOP_PILOT ) || "|" || Char( :WEC_LAYER ) ) );
+    ,
+        Column( dt, "TARGET_GROUP_KEY" ) << Delete Formula;
+        Column( dt, "TARGET_GROUP_KEY" ) << Set Each Value( Char( :PROD_MOP_PILOT ) || "|" || Char( :WEC_LAYER ) );
+    );
+
+    If( Try( Column( dt, "TARGET_REGIME_LATEST" ); 1, 0 ) == 0,
+        dt << New Column( "TARGET_REGIME_LATEST", Numeric, Continuous, Format( "Best", 8 ), Set Each Value( 0 ) );
+    ,
+        Column( dt, "TARGET_REGIME_LATEST" ) << Delete Formula;
+        Column( dt, "TARGET_REGIME_LATEST" ) << Set Each Value( 0 );
+    );
+
+    If( Try( Column( dt, "N_PRE_CHANGE" ); 1, 0 ) == 0,
+        dt << New Column( "N_PRE_CHANGE", Numeric, Continuous, Format( "Best", 8 ), Set Each Value( . ) );
+    ,
+        Column( dt, "N_PRE_CHANGE" ) << Delete Formula;
+        Column( dt, "N_PRE_CHANGE" ) << Set Each Value( . );
+    );
+
+    If( Try( Column( dt, "TARGET_CHANGE_DATE" ); 1, 0 ) == 0,
+        dt << New Column( "TARGET_CHANGE_DATE", Numeric, Continuous, Format( "m/d/y h:m", 18, 0 ), Set Each Value( . ) );
+    ,
+        Column( dt, "TARGET_CHANGE_DATE" ) << Delete Formula;
+        Column( dt, "TARGET_CHANGE_DATE" ) << Set Each Value( . );
+    );
+
+    unique_keys = Associative Array( dt:TARGET_GROUP_KEY ) << Get Keys;
+    Log_Debug( "Applying target regime filter. Groups=" || Char( N Items( unique_keys ) ) );
+
+    For( k = 1, k <= N Items( unique_keys ), k++,
+        gkey = unique_keys[k];
+        rows = dt << Get Rows Where( :TARGET_GROUP_KEY == gkey );
+
+        If( N Items( rows ) == 0,
+            Continue();
+        );
+
+        n = N Items( rows );
+        last_row = rows[n];
+        last_tgt = Num( dt:ALLSTATS_MEAN_TARGET_VALUE[last_row] );
+
+        If( Is Missing( last_tgt ),
+            For( j = 1, j <= n, j++,
+                dt:TARGET_REGIME_LATEST[rows[j]] = 1;
+            );
+            Log_Debug( "REGIME " || gkey || " | last target missing, kept all " || Char( n ) || " rows" );
+            Continue();
+        );
+
+        regime_start = n;
+        While( regime_start > 1,
+            prev_tgt = Num( dt:ALLSTATS_MEAN_TARGET_VALUE[rows[regime_start - 1]] );
+            If( Is Missing( prev_tgt ) | prev_tgt != last_tgt,
+                Break();
+            );
+            regime_start = regime_start - 1;
+        );
+
+        For( j = regime_start, j <= n, j++,
+            dt:TARGET_REGIME_LATEST[rows[j]] = 1;
+        );
+
+        Log_Debug(
+            "REGIME " || gkey ||
+            " | last target=" || Char( last_tgt ) ||
+            " | kept rows=" || Char( n - regime_start + 1 ) ||
+            " | dropped rows=" || Char( regime_start - 1 )
+        );
+    );
+
+    before_rows = N Rows( dt );
+    dt << Select Where( :TARGET_REGIME_LATEST != 1 );
+    dt << Delete Rows;
+    dt << Clear Select;
+    Log_Debug( "Target regime filter complete. Before=" || Char( before_rows ) || " | After=" || Char( N Rows( dt ) ) );
+
+    dt;
+);
+
+Apply_Chart_Formatting = Function( {report_obj, dt_ref, y_col_name, legend_col_name, limit_config, chart_kind},
+    reports_raw = report_obj << Report;
+    If( Type( reports_raw ) == "List",
+        reports = reports_raw;
+    ,
+        reports = {reports_raw};
+    );
+
+    axisbox2_height = If( chart_kind == "VAR", prod_mop_pilot_height + site_height + reticle_height, 0 );
+
+    If( chart_kind == "VAR" & use_uniform_var_width == 1,
+        // Keep all Variability panels the same width within a window.
+        max_groups_for_width = 0;
+        For Each( {rptw}, reports,
+            Try(
+                segs_w = rptw[FrameBox( 1 )] << Find Segs;
+                boxplot_segs_w = Filter Each( {seg}, segs_w, (seg << Class Name) == "BoxPlotSeg" );
+                groups_closest_w = N Items( boxplot_segs_w );
+                groups_axis_w = rptw[AxisBox( 2 )] << Get Max;
+                groups_used_w = If( groups_closest_w > 0, groups_closest_w, groups_axis_w );
+                If( !Is Missing( groups_used_w ) & groups_used_w > max_groups_for_width,
+                    max_groups_for_width = groups_used_w;
+                );
+            );
+        );
+        If( max_groups_for_width <= 0,
+            max_groups_for_width = 1;
+        );
+        uniform_var_width = Max( min_varchart_width, max_groups_for_width * varchart_group_width * 0.6 );
+        Log_Debug( "VAR WIDTH UNIFORM | groups_used=" || Char( max_groups_for_width ) || " | width=" || Char( uniform_var_width ) );
+    );
+
+    For Each( {rpt}, reports,
+        current_title = Char( rpt << Get Title );
+        layer_value = Extract_By_Value( current_title, by_col );
+        Log_Debug( chart_kind || " TITLE | " || current_title || " | parsed layer=" || layer_value );
+
+        Try(
+            rpt[1][Frame Box( 1 )] << Row Legend(
+                Column( dt_ref, legend_col_name ),
+                Color( 0 ), Color Theme( "" ),
+                Marker( 0 ), Marker Theme( "Standard" ),
+                Continuous Scale( 0 ), Reverse Scale( 0 ), Excluded Rows( 0 )
+            )
+        );
+
+        Try( rpt[1][Frame Box( 1 )] << {Marker Drawing Mode( "Filled" )} );
+        Try( axisbox = rpt[AxisBox( 1 )]; axisbox << Show Major Grid( 1 ); axisbox << Show Minor Grid( 1 ) );
+        Try( axisbox = rpt[AxisBox( 2 )]; axisbox << Show Major Grid( 1 ); axisbox << Show Minor Grid( 1 ) );
+
+        If( chart_kind == "VAR",
+            Try( rpt[AxisBox( 2 )] << Axis Settings( {Label Orientation( "Angled" )} ) );
+            Try( rpt[AxisBox( 2 )] << Set Height( axisbox2_height ) );
+
+            // Optional hide of individual grouping-level labels
+            Try(
+                text_boxes = rpt << XPath( "//TextBox" );
+                n_text_boxes = N Items( text_boxes );
+                Log_Debug( "VAR TEXTBOX COUNT | layer=" || layer_value || " | count=" || Char( n_text_boxes ) );
+
+                For( tb_i = 1, tb_i <= n_text_boxes, tb_i++,
+                    tb_text = Trim( Char( text_boxes[tb_i] << Get Text ) );
+                    If(
+                        (hide_var_group_level_1_label == 1 & tb_text == pilot_col)
+                        | (hide_var_group_level_2_label == 1 & tb_text == site_col)
+                        | (hide_var_group_level_3_label == 1 & tb_text == reticle_col),
+                        text_boxes[tb_i] << Set Text( "" );
+                        Log_Debug( "VAR LABEL CLEARED | layer=" || layer_value || " | idx=" || Char( tb_i ) || " | text=" || tb_text );
+                    );
+                );
+            );
+            If( hide_var_group_level_1_label == 1,
+                Try( rpt[TextBox( 2 )] << Set Text( "" ) );
+                Try( rpt[1][TextBox( 2 )] << Set Text( "" ) );
+            );
+            If( hide_var_group_level_2_label == 1,
+                Try( rpt[TextBox( 3 )] << Set Text( "" ) );
+                Try( rpt[1][TextBox( 3 )] << Set Text( "" ) );
+            );
+            If( hide_var_group_level_3_label == 1,
+                Try( rpt[TextBox( 4 )] << Set Text( "" ) );
+                Try( rpt[1][TextBox( 4 )] << Set Text( "" ) );
+            );
+
+            Try(
+                // Prefer closest-to-chart reticle-group count per layer for width scaling.
+                // Fall back to segment/axis counts if needed.
+                mySegs = rpt[FrameBox( 1 )] << Find Segs;
+                boxplotSegs = Filter Each( {seg}, mySegs, (seg << Class Name) == "BoxPlotSeg" );
+                groups_closest = N Items( boxplotSegs );
+                groups_axis = rpt[AxisBox( 2 )] << Get Max;
+
+                rows_layer = dt_ref << Get Rows Where( :WEC_LAYER == layer_value );
+                reticle_aa = Associative Array();
+                For( r_i = 1, r_i <= N Items( rows_layer ), r_i++,
+                    reticle_val = Char( Column( dt_ref, reticle_col )[rows_layer[r_i]] );
+                    If( reticle_val != "",
+                        reticle_aa[reticle_val] = 1;
+                    );
+                );
+                groups_reticle = N Items( reticle_aa << Get Keys );
+
+                groups_for_width = If( groups_reticle > 0, groups_reticle, If( groups_closest > 0, groups_closest, groups_axis ) );
+                If( use_uniform_var_width == 1,
+                    var_width = uniform_var_width,
+                    var_width = Max( min_varchart_width, groups_for_width * varchart_group_width )
+                );
+                Log_Debug(
+                    "VAR WIDTH | layer=" || layer_value ||
+                    " | groups_reticle=" || Char( groups_reticle ) ||
+                    " | groups_closest=" || Char( groups_closest ) ||
+                    " | groups_axis=" || Char( groups_axis ) ||
+                    " | uniform_mode=" || Char( use_uniform_var_width ) ||
+                    " | groups_used=" || Char( groups_for_width ) ||
+                    " | width=" || Char( var_width )
+                );
+                rpt[FrameBox( 1 )] << Set Width( var_width );
+                rpt[FrameBox( 1 )] << Set Height( total_panel_height );
+                Log_Debug(
+                    "VAR HEIGHT | layer=" || layer_value ||
+                    " | frame_height=" || Char( total_panel_height ) ||
+                    " | axisbox2_height=" || Char( axisbox2_height )
+                );
+            );
+        ,
+            Try(
+                rpt[ScaleBox( 1 )] << {
+                    Interval( "Week" ),
+                    Inc( 2 ),
+                    Minor Ticks( 0 ),
+                    Label Row( {
+                        Label Orientation( "Angled" ),
+                        Show Major Grid( 1 ),
+                        Show Minor Grid( 1 )
+                    } )
+                }
+            );
+            Try( rpt[FrameBox( 1 )] << Set Width( trend_frame_width ) );
+            trend_frame_height = Max( 60, total_panel_height - trend_bottom_padding );
+            Try( rpt[FrameBox( 1 )] << Set Height( trend_frame_height ) );
+            Log_Debug(
+                chart_kind || " HEIGHT | layer=" || layer_value ||
+                " | frame_height=" || Char( trend_frame_height ) ||
+                " | bottom_padding=" || Char( trend_bottom_padding )
+            );
+            Try( rpt[BorderBox( 3 )] << Visibility( "Collapse" ) );
+            Try( rpt[BorderBox( 4 )] << Visibility( "Collapse" ) );
+        );
+
+        If( y_col_name == "ALLSTATS_MEAN_DTT_VALUE",
+            Apply_Mean_DTT_Limits( rpt, layer_value, limit_config );
+        ,
+            Apply_Generic_Y_Padding( rpt, dt_ref, y_col_name, layer_value );
+        );
+    );
+);
+
+Build_Report_Window = Function( {dt_main, dt_site, y_col_name, window_title, limit_config},
+    Log_Debug( "BUILD WINDOW | " || window_title || " | y=" || y_col_name );
+
+    win = New Window( window_title,
+        V List Box(
+            H List Box(
+                fg_var = dt_main << Fit Group(
+                    var_chart = dt_main << Variability Chart(
+                        Y( Column( dt_main, y_col_name ) ),
+                        X( Column( dt_main, pilot_col ), Column( dt_main, site_col ), Column( dt_main, reticle_col ) ),
+                        By( Column( dt_main, by_col ) ),
+                        Connect Cell Means( 1 ),
+                        Show Cell Means( 1 ),
+                        Show Box Plots( 1 )
+                    ),
+                    << {Arrange in Rows( 1 )},
+                    SendToReport( Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "Variability: Pilot / Site / Reticle" ), Close( 0 )} ) )
+                );,
+
+                fg_trend_prod = dt_main << Fit Group(
+                    tr_prod = Bivariate(
+                        Y( Column( dt_main, y_col_name ) ),
+                        X( Column( dt_main, time_col ) ),
+                        By( Column( dt_main, by_col ) ),
+                        GroupBy( Column( dt_main, pilot_col ) )
+                    ),
+                    << {Arrange in Rows( 1 )},
+                    SendToReport( Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "Time Trend by PROD_MOP_PILOT" ), Close( 0 )} ) )
+                );,
+
+                fg_trend_site = dt_site << Fit Group(
+                    tr_site = Bivariate(
+                        Y( Column( dt_site, y_col_name ) ),
+                        X( Column( dt_site, time_col ) ),
+                        By( Column( dt_site, by_col ) ),
+                        GroupBy( Column( dt_site, site_pilot_col ) )
+                    ),
+                    << {Arrange in Rows( 1 )},
+                    SendToReport( Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "Time Trend by SITE_PROD_MOP_PILOT" ), Close( 0 )} ) )
+                )
+            )
+        )
+    );
+
+    Try( tr_prod << Fit Line( {Line Width( 2 ), Report( 0 )} ) );
+    Try( tr_site << Fit Line( {Line Width( 2 ), Report( 0 )} ) );
+
+    Apply_Chart_Formatting( var_chart, dt_main, y_col_name, pilot_col, limit_config, "VAR" );
+    Apply_Chart_Formatting( tr_prod, dt_main, y_col_name, pilot_col, limit_config, "TREND_PROD" );
+    Apply_Chart_Formatting( tr_site, dt_site, y_col_name, site_pilot_col, limit_config, "TREND_SITE" );
+
+    win << Maximize Window;
+);
+
+Close_Previous_Generated_Tables = Function( {},
+    Try(
+        dt_old = Data Table( "ProdTarget Main Table" );
+        If( Is Scriptable( dt_old ),
+            Log_Debug( "Closing existing table: ProdTarget Main Table" );
+            dt_old << Close Window;
+        );
+    );
+    Try(
+        dt_old = Data Table( "ProdTarget Site Table" );
+        If( Is Scriptable( dt_old ),
+            Log_Debug( "Closing existing table: ProdTarget Site Table" );
+            dt_old << Close Window;
+        );
+    );
+);
+
+Close_Previous_Generated_Windows = Function( {},
+    If( last_mean_window_title != "",
+        Try(
+            Log_Debug( "Closing previous window: " || last_mean_window_title );
+            Window( last_mean_window_title ) << Close Window;
+        );
+    );
+
+    If( last_wafer_window_title != "",
+        Try(
+            Log_Debug( "Closing previous window: " || last_wafer_window_title );
+            Window( last_wafer_window_title ) << Close Window;
+        );
+    );
+);
+
+Build_Prod_Targeting = Function(
+    {pilot_list, include_full_history, use_spc_mode, layer_filter_list, close_windows, dlg_win},
+
+    debug_log = "";
+    Log_Debug( "START PROD TARGETING" );
+    Log_Debug( "PILOTS=" || Char( pilot_list ) );
+    Log_Debug( "LAYERS=" || Char( layer_filter_list ) );
+
+    If( close_windows == 1,
+        Log_Debug( "Close option enabled: closing windows except dialog" );
+        For Each( {win_obj}, Get Window List(),
+            If( win_obj != dlg_win,
+                Try(
+                    Log_Debug( "Closing window from Get Window List" );
+                    win_obj << Close Window( "NoSave" );
+                );
+            );
+        );
+        Log_Debug( "Closing all data tables" );
+        Close All( "Data Tables", "NoSave" );
+    ,
+        Close_Previous_Generated_Windows();
+        Close_Previous_Generated_Tables();
+    );
+
+    Close_Previous_Generated_Tables();
+
+    If( !File Exists( path_d1v_apc ),
+        Throw( "Missing input file: " || path_d1v_apc );
+    );
+
+    dt_main = Open( path_d1v_apc );
+    dt_main << Set Name( "ProdTarget Main Table" );
+    Log_Debug( "Opened main source rows=" || Char( N Rows( dt_main ) ) );
+
+    If( File Exists( path_f32 ),
+        dt2 = Open( path_f32 );
+        dt_main << Concatenate( dt2, Append to First Table );
+        Log_Debug( "Concatenated F32 rows=" || Char( N Rows( dt2 ) ) || " | combined=" || Char( N Rows( dt_main ) ) );
+        dt2 << Close Window;
+    ,
+        Log_Debug( "F32 file missing, proceeding with D1V APC only" );
+    );
+
+    // Pilot list filter
+    dt_main << Select Where( !Contains( pilot_list, Char( :PROD_MOP_PILOT ) ) );
+    dt_main << Delete Rows;
+    dt_main << Clear Select;
+    Log_Debug( "After pilot filter rows=" || Char( N Rows( dt_main ) ) );
+
+    If( N Rows( dt_main ) == 0,
+        Throw( "No rows remain after PROD_MOP_PILOT filtering." );
+    );
+
+    // Optional layer filter (WEC_LAYER)
+    If( N Items( layer_filter_list ) > 0,
+        dt_main << Select Where( !Contains( layer_filter_list, Char( :WEC_LAYER ) ) );
+        dt_main << Delete Rows;
+        dt_main << Clear Select;
+        Log_Debug( "After layer filter rows=" || Char( N Rows( dt_main ) ) );
+    );
+
+    If( N Rows( dt_main ) == 0,
+        Throw( "No rows remain after layer filtering." );
+    );
+
+    // SPC-mode handling consistent with fleet script behavior
+    If( use_spc_mode == 1,
+        If( Try( Column( dt_main, "ALLSTATS_DYNWAFER" ); 1, 0 ) == 1,
+            dt_main << Select Where( :ALLSTATS_DYNWAFER != "DYNWAFER_001" );
+            dt_main << Delete Rows;
+            dt_main << Clear Select;
+            Log_Debug( "After SPC mode filter rows=" || Char( N Rows( dt_main ) ) );
+        );
+    );
+
+    // Target regime filtering (ANY target change boundary)
+    Apply_Target_Regime_Filter( dt_main );
+
+    If( N Rows( dt_main ) == 0,
+        Throw( "No rows remain after TARGET_REGIME_LATEST filtering." );
+    );
+
+    // Optional 45-day lookback (unless full history requested)
+    If( include_full_history != 1,
+        max_ts = Col Max( :DATA_COLLECTION_TIME );
+        If( !Is Missing( max_ts ),
+            cutoff_ts = max_ts - In Days( 45 );
+            dt_main << Select Where( Is Missing( :DATA_COLLECTION_TIME ) | :DATA_COLLECTION_TIME < cutoff_ts );
+            dt_main << Delete Rows;
+            dt_main << Clear Select;
+            Log_Debug( "After lookback rows=" || Char( N Rows( dt_main ) ) );
+        );
+    );
+
+    If( N Rows( dt_main ) == 0,
+        Throw( "No rows remain after lookback filtering." );
+    );
+
+    dt_site = dt_main << Subset(
+        Output Table Name( "ProdTarget Site Table" ),
+        All rows,
+        All columns
+    );
+
+    Build_Site_Prod_Mop_Pilot_Column( dt_main );
+    Build_Site_Prod_Mop_Pilot_Column( dt_site );
+
+    Log_Debug( "Created site table rows=" || Char( N Rows( dt_site ) ) );
+
+    dt_main << Color or Mark by Column(
+        Column( dt_main, pilot_col ),
+        Color Theme( "JMP Vibrant"( 1 ) ),
+        Marker Theme( "Standard" ),
+        Continuous Scale( 0 )
+    );
+
+    dt_site << Color or Mark by Column(
+        Column( dt_site, site_pilot_col ),
+        Color Theme( "Shades"( 1 ) ),
+        Marker Theme( "Standard" ),
+        Continuous Scale( 0 )
+    );
+
+    pilot_summary = Concat Items( pilot_list, ", " );
+    If( Length( pilot_summary ) > 120,
+        pilot_summary = Substr( pilot_summary, 1, 120 ) || "...";
+    );
+
+    dt_main << Set Name( "ProdTarget Main Table" );
+
+    limit_config = Build_Limit_Config( dt_main );
+
+    Build_Report_Window(
+        dt_main,
+        dt_site,
+        "ALLSTATS_MEAN_DTT_VALUE",
+        "sDTT PROD TARGETING - MEAN DTT - " || pilot_summary,
+        limit_config
+    );
+    last_mean_window_title = "sDTT PROD TARGETING - MEAN DTT - " || pilot_summary;
+
+    Build_Report_Window(
+        dt_main,
+        dt_site,
+        "ALLSTATS_WAFER_MEAN_VALUE",
+        "sDTT PROD TARGETING - WAFER MEAN - " || pilot_summary,
+        limit_config
+    );
+    last_wafer_window_title = "sDTT PROD TARGETING - WAFER MEAN - " || pilot_summary;
+
+    Log_Debug( "COMPLETE. Main rows=" || Char( N Rows( dt_main ) ) || " | Site rows=" || Char( N Rows( dt_site ) ) );
+    Flush_Debug_Log();
+    Show( "Prod targeting report generated. Main rows: ", N Rows( dt_main ), "  Site rows: ", N Rows( dt_site ) );
+);
+
+// ============================================================
+// DIALOG
+// ============================================================
+dialog_window = New Window( "sDTT Prod Targeting Report Options",
+    V List Box(
+
+        Panel Box( "PROD_MOP_PILOT INPUT",
+            V List Box(
+                Text Box( "Enter PROD_MOP_PILOT values (comma or newline separated):" ),
+                pilot_input_tb = Text Edit Box( "", << Set Width( 700 ), << Set Height( 120 ) )
+            )
+        ),
+
+        Panel Box( "OPTIONAL LAYER FILTER",
+            V List Box(
+                Text Box( "WEC_LAYER list (comma separated), blank = all layers:" ),
+                layer_input_tb = Text Edit Box( "", << Set Width( 500 ) )
+            )
+        ),
+
+        Panel Box( "OPTIONS",
+            V List Box(
+                cb_close_reports = Check Box( "Close open report windows", 1 ),
+                cb_include_full_history = Check Box( "Include full history (otherwise last 45 days)", 0 ),
+                cb_spc_mode = Check Box( "SPC mode (keep DYNWAFER_001 only)", 0 )
+            )
+        ),
+
+        H List Box(
+            Button Box( "Generate Report",
+                pilots = Parse_Pilot_List( pilot_input_tb << Get Text );
+                layers = Parse_Layer_List( layer_input_tb << Get Text );
+
+                If( N Items( pilots ) == 0,
+                    Throw( "Please provide at least one PROD_MOP_PILOT value." );
+                );
+
+                Build_Prod_Targeting(
+                    pilots,
+                    cb_include_full_history << Get,
+                    cb_spc_mode << Get,
+                    layers,
+                    cb_close_reports << Get,
+                    dialog_window
+                );
+            ),
+
+            Button Box( "Close",
+                Flush_Debug_Log();
+                dialog_window << Close Window;
+            )
+        )
+    )
+);

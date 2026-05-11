@@ -1,0 +1,8 @@
+3861258609 | Closed previous window: Toy ByGroup Copy Picture Probe
+3861258610 | Closed previous table: Toy ByGroup Copy Picture Source
+3861258610 | Closed previous table: Toy ByGroup Copy Picture Working
+3861258610 | Opened source rows=40
+3861258610 | Selected age groups={12, 13, 14, 15}
+3861258610 | Working table rows=40
+3861258610 | Rendered chamber-mirror row
+3861258612 | COMPLETE

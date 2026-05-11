@@ -1,0 +1,1135 @@
+﻿//!
+Names Default To Here( 1 );
+path_60day="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\Defects\BE\outputs\wafer\8M5CL_8M6CL_EXTENDED_60DAY.csv";
+coords_path_60day="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\Defects\BE\outputs\defects\DEFECT_COORDINATES_EXTENDED.csv";
+path_extended="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\Defects\BE\outputs\wafer\8M5CL_8M6CL_EXTENDED.csv";
+coords_path_extended="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\Defects\BE\outputs\defects\DEFECT_COORDINATES_EXTENDED.csv";
+path=path_60day;
+coords_path=coords_path_60day;
+
+//REPORT WINDOW
+window_title="NCDD Report";
+varchart_group_width=20;
+LIMIT_COLOR="Black";
+vcol1="CHAMBER";	
+vcol2="PRODUCT";		
+
+bycol1="LAYER";		
+xcol="INSPECT_TIME";		
+legendcol1="CHAMBER";		
+legendcol2="PRODUCT";
+title="NCDD";	
+ycol0="SUM_NCDD";	
+ycol1="SMP_NCDD";	
+ycol2="BEEP_NCDD";
+filter_str="SMP NCDD";
+
+ymin=-0.001;ymax=0.02;inc=0.002;
+
+jittered=0;
+
+// Declare variables BEFORE the dialog
+SELECTED_INDEX = 1;
+index = .;
+val_cb_close_reports_and_windows = 0;
+val_hide_status = 1; // Default: Hide Highfliers NOT in chamber list (first option)
+val_cb_hide_non_standard = 1; // Default to checked (hide non-standard)
+val_show_fleet = 0; // Default: hide FLEET coordinate points
+val_black_wafermap_markers = 0; // Default: preserve chamber colors on wafermaps
+val_chamber_index = 1; // Default to first team member
+val_source_index = 1; // Default: 60-day source set
+selected_source_name = "Most recent 60 days";
+val_yymm_lookback_periods = 12;
+yymm_cutoff_value = .;
+SUBENTITY_STR = "";
+CHAMBER_STR = "";
+NCDD_str = "";
+
+Normalize_YYMM_Value = Function({raw_value}, {Default Local},
+	_raw_char = Trim(Char(raw_value));
+	If(_raw_char == "" | _raw_char == ".",
+		Return(.);
+	);
+	_num = Num(_raw_char);
+	If(Is Missing(_num),
+		Return(.);
+	);
+	Round(_num, 1);
+);
+
+YYMM_To_Period_Index = Function({yymm_value}, {Default Local},
+	_yymm_num = Normalize_YYMM_Value(yymm_value);
+	If(Is Missing(_yymm_num),
+		Return(.);
+	);
+	_yy = Floor(_yymm_num / 100);
+	_mm = Mod(_yymm_num, 100);
+	If(_mm < 1 | _mm > 12,
+		Return(.);
+	);
+	(_yy * 12) + (_mm - 1);
+);
+
+Period_Index_To_YYMM = Function({period_index}, {Default Local},
+	If(Is Missing(period_index),
+		Return(.);
+	);
+	_yy = Floor(period_index / 12);
+	_mm = Mod(period_index, 12) + 1;
+	(_yy * 100) + _mm;
+);
+
+Parse_Lookback_Periods = Function({raw_text, default_value}, {Default Local},
+	_text_num = Num(Trim(Char(raw_text)));
+	If(Is Missing(_text_num) | _text_num < 1,
+		Return(default_value);
+	);
+	Max(1, Floor(_text_num));
+);
+
+Get_Max_YYMM_From_Table = Function({table_obj}, {Default Local},
+	_cols = table_obj << Get Column Names("String");
+	If(!Contains(_cols, "YYMM"),
+		Return(.);
+	);
+	_max_period_index = .;
+	For(_r = 1, _r <= N Rows(table_obj), _r++,
+		_period_index = YYMM_To_Period_Index(Column(table_obj, "YYMM")[_r]);
+		If(!Is Missing(_period_index),
+			If(Is Missing(_max_period_index),
+				_max_period_index = _period_index,
+				_max_period_index = Max(_max_period_index, _period_index)
+			);
+		);
+	);
+	Period_Index_To_YYMM(_max_period_index);
+);
+
+Apply_YYMM_Lookback_Filter = Function({table_obj, cutoff_period_index}, {Default Local},
+	_cols = table_obj << Get Column Names("String");
+	If(!Contains(_cols, "YYMM") | Is Missing(cutoff_period_index),
+		Return(0);
+	);
+	table_obj << Select Where(
+		Is Missing(YYMM_To_Period_Index(Column(table_obj, "YYMM")[Row()])) |
+		YYMM_To_Period_Index(Column(table_obj, "YYMM")[Row()]) < cutoff_period_index
+	);
+	_n_removed = N Row(table_obj << Get Selected Rows);
+	If(_n_removed > 0,
+		table_obj << Delete Rows;
+	);
+	table_obj << Clear Select;
+	_n_removed;
+);
+
+// Chamber lists keyed by team member (name, chamber_list)
+chamber_data = {
+    {"Trey",    {"AME409_PM1","AME409_PM2","AME409_PM3","AME409_PM4","AME409_PM5","AME409_PM6","AME421_PM3","AME421_PM4"}},
+    {"Kayden",  {"AME403_PM1","AME403_PM2","AME403_PM3","AME403_PM4","AME403_PM5","AME403_PM6","AME421_PM1","AME421_PM2"}},
+    {"Chang",   {"AME401_PM1","AME401_PM2","AME401_PM3","AME401_PM4","AME401_PM5","AME401_PM6","AME423_PM1","AME423_PM2"}},
+    {"Adi",     {"AME403_PM1","AME403_PM2","AME403_PM3","AME403_PM4","AME403_PM5","AME403_PM6","AME421_PM5","AME421_PM6"}},
+    {"Travis",  {"AME405_PM1","AME405_PM2","AME405_PM3","AME405_PM4","AME405_PM5","AME405_PM6","AME423_PM5","AME423_PM6"}},
+    {"Tyler",   {"AME411_PM1","AME411_PM2","AME411_PM3","AME411_PM4","AME411_PM5","AME411_PM6"}},
+    {"Mathius", {"AME417_PM1","AME417_PM2","AME417_PM3","AME417_PM4","AME417_PM5","AME417_PM6","AME423_PM3","AME423_PM4"}},
+    {"Sashank", {"AME419_PM1","AME419_PM2","AME419_PM3","AME419_PM4","AME419_PM5","AME419_PM6"}},
+    {"William", {"AME425_PM1","AME425_PM2","AME425_PM3","AME425_PM4","AME425_PM5","AME425_PM6"}},
+    {"Minog",   {"AME427_PM1","AME427_PM2","AME427_PM3","AME427_PM4","AME427_PM5","AME427_PM6"}}
+};
+
+// ============================================================
+// USER INPUT DIALOG
+// ============================================================
+result = New Window( "NCDD Report Options", <<Modal, <<Return Result,
+    V List Box(
+        Lineup Box(N Col(1),
+			Panel Box("CSV SOURCE",
+				rbSource = Radio Box(
+					{"Most recent 60 days CSV + coordinates",
+					 "Full integrated CSV + coordinates",
+					 "YYMM lookback on full CSVs"}
+				),
+				H List Box(
+					Text Box("YYMM periods:"),
+					yymmLookbackTB = Text Edit Box("12", <<Set Width(40))
+				)
+			),
+            Panel Box("SELECT TEAM MEMBER",
+                rbChamber = Radio Box( {"Trey", "Kayden", "Chang", "Adi", "Travis", "Tyler", "Mathius", "Sashank", "William", "Minog"} ),
+            ),
+            Panel Box("SINGLE CHAMBER OVERRIDE  (supersedes team member selection)",
+                Lineup Box(N Col(7),
+                    Text Box( "AME4" ), ENTITY_TB = Text Edit Box( "", <<Set Width( 25 ) ),
+                    Text Box( "_PM" ), PM_TB = Text Edit Box( "", <<Set Width( 12 ) ),
+                    Spacer Box(Size(10, 10)),
+                    Text Box( "  — or full SUBENTITY:" ), SUBENTITY_TB = Text Edit Box( "", <<Set Width( 100 ) ),
+                ),
+            ),
+            Panel Box("OPTIONS",
+                cb_close_reports_and_windows = Check Box( "Close Reports & Windows" ),
+                cb_show_fleet = Check Box( "Show FLEET Coordinates" ),
+				cb_black_wafermap_markers = Check Box( "Black Wafermap Markers" ),
+            ),
+            Panel Box("HIGHFLIER / BASELINE FILTER",
+                rbHideStatus = Radio Box(
+                    {"Hide Highfliers NOT in chamber list",
+                     "Hide ALL Highfliers",
+                     "Hide BASELINE rows",
+                     "Hide / Exclude nothing (show all rows)"}
+                ),
+            ),
+            Button Box( "OK",
+                val_cb_close_reports_and_windows = cb_close_reports_and_windows << Get;
+                val_show_fleet = cb_show_fleet << Get;
+				val_black_wafermap_markers = cb_black_wafermap_markers << Get;
+                val_hide_status = rbHideStatus << Get;
+                val_chamber_index = rbChamber << Get;
+				val_source_index = rbSource << Get;
+				val_yymm_lookback_periods = Parse_Lookback_Periods(yymmLookbackTB << Get Text, 12);
+				If(val_source_index == 2,
+					path = path_extended;
+					coords_path = coords_path_extended;
+					selected_source_name = "Full integrated";
+				,
+					If(val_source_index == 3,
+						path = path_extended;
+						coords_path = coords_path_extended;
+						selected_source_name = "YYMM lookback (" || Char(val_yymm_lookback_periods) || " periods)";
+					,
+						path = path_60day;
+						coords_path = coords_path_60day;
+						selected_source_name = "Most recent 60 days";
+					);
+				,
+					path = path_60day;
+					coords_path = coords_path_60day;
+					selected_source_name = "Most recent 60 days";
+				);
+
+                // Resolve chamber override — SUBENTITY_TB is always top priority.
+                // Accepts a comma-separated list, e.g. "AME409_PM1,AME411_PM4,AME427_PM3"
+                SUBENTITY_STR = Trim(SUBENTITY_TB << Get Text());
+                If(SUBENTITY_STR != "",
+                    // Parse comma-separated entries into chamber_list
+                    chamber_list = Words(SUBENTITY_STR, ",");
+                    // Trim whitespace from each entry
+                    For(i = 1, i <= N Items(chamber_list), i++,
+                        chamber_list[i] = Trim(chamber_list[i]);
+                    );
+                    selected_member = "CUSTOM: " || SUBENTITY_STR;
+                ,
+                    // Next priority: AME entity + PM number construction
+                    ENTITY_STR = Trim(ENTITY_TB << Get Text());
+                    PM_STR = Trim(PM_TB << Get Text());
+                    If(ENTITY_STR != "" & PM_STR != "",
+                        CHAMBER_STR = "AME4" || ENTITY_STR || "_PM" || PM_STR;
+                        chamber_list = {};
+                        Insert Into(chamber_list, CHAMBER_STR);
+                        selected_member = "CUSTOM: " || CHAMBER_STR;
+                    ,
+                        // Fallback: radio box team member selection
+                        chamber_list = chamber_data[val_chamber_index][2];
+                        selected_member = chamber_data[val_chamber_index][1];
+                    );
+                );
+                Show("CHAMBER_STR:", CHAMBER_STR, "chamber_list:", chamber_list, "selected_member:", selected_member);
+				Show("Selected source:", selected_source_name, "path:", path, "coords_path:", coords_path, "YYMM periods:", val_yymm_lookback_periods);
+
+                // Only return numeric values in result list to avoid {string_var} symbol issues
+				{val_cb_close_reports_and_windows, val_hide_status, val_show_fleet, val_source_index, val_black_wafermap_markers}
+            ),
+        ),
+    ),
+);
+
+// Extract results from modal dialog (chamber_list and selected_member already set inside Button Box)
+If(Is List(result) & N Items(result) == 5,
+    val_cb_close_reports_and_windows = result[1];
+    val_hide_status = result[2];
+    val_show_fleet = result[3];
+	val_source_index = result[4];
+	val_black_wafermap_markers = result[5];
+    Show("Close Reports & Windows:", val_cb_close_reports_and_windows);
+    Show("Hide/Status filter selection:", val_hide_status);
+);
+Show("Selected source:", selected_source_name);
+Show("Selected member:", selected_member);
+Show("chamber_list:", chamber_list);
+
+// Apply close reports/windows BEFORE opening new data
+If(val_cb_close_reports_and_windows == 1,
+    Close All( "Reports", "NoSave" );
+    Close All( "Data Tables", "NoSave" );
+);
+// ============================================================
+// END USER INPUT DIALOG
+// ============================================================
+
+dt=Open(path); dt = Current Data Table();
+
+// Open defect coordinates table alongside the NCDD summary
+dt_coords = Open(coords_path, Invisible);
+dt_coords << Set Name("Defect Coordinates");
+
+If(val_source_index == 3,
+	_max_yymm = Get_Max_YYMM_From_Table(dt);
+	_max_period_index = YYMM_To_Period_Index(_max_yymm);
+	If(!Is Missing(_max_period_index),
+		_cutoff_period_index = _max_period_index - (val_yymm_lookback_periods - 1);
+		yymm_cutoff_value = Period_Index_To_YYMM(_cutoff_period_index);
+		_removed_dt_rows = Apply_YYMM_Lookback_Filter(dt, _cutoff_period_index);
+		_removed_coord_rows = Apply_YYMM_Lookback_Filter(dt_coords, _cutoff_period_index);
+		Print(
+			"YYMM lookback filter applied - periods=" || Char(val_yymm_lookback_periods) ||
+			" max_yymm=" || Char(_max_yymm) ||
+			" cutoff_yymm=" || Char(yymm_cutoff_value) ||
+			" removed_rows(metrics,coords)=(" || Char(_removed_dt_rows) || "," || Char(_removed_coord_rows) || ")"
+		);
+		selected_source_name = selected_source_name || " cutoff>= " || Char(yymm_cutoff_value);
+	,
+		Print("YYMM lookback requested but no valid YYMM values were found; leaving tables unfiltered.");
+	);
+);
+
+// Build ORIGINAL_ROW_NUMBER in dt_coords: maps each coord row to the
+// corresponding row index in dt (joined on WAFER_ID + LAYER).
+// Used by MakeRowStateHandler for O(1) row propagation without key strings.
+_key_map = Associative Array();
+For(_r = 1, _r <= N Rows(dt), _r++,
+    _key_map[Column(dt,"WAFER_ID")[_r] || "|" || Column(dt,"LAYER")[_r]] = _r;
+);
+dt_coords << New Column("ORIGINAL_ROW_NUMBER", Numeric, Continuous);
+For(_r = 1, _r <= N Rows(dt_coords), _r++,
+    _k = Column(dt_coords,"WAFER_ID")[_r] || "|" || Column(dt_coords,"LAYER")[_r];
+	_v = .;
+	Try(
+		_v = _key_map[_k];
+	,
+		_v = .;
+	);
+    If(!Is Missing(_v),
+        Column(dt_coords,"ORIGINAL_ROW_NUMBER")[_r] = _v;
+    );
+);
+Print("ORIGINAL_ROW_NUMBER built for " || Char(N Rows(dt_coords)) || " coord rows");
+
+// chamber_list is already set from dialog selection above
+dt << New Column( "CHAMBER",Character,Set Each Value(If(Contains( chamber_list, :SUBENTITY ),:SUBENTITY,"FLEET")));
+
+// Color or mark by column
+dt << Color or Mark by Column(:CHAMBER,Color Theme( "JMP Vibrant"(1) ),Marker Theme( "Solid" ),Continuous Scale( 0 ));
+
+// Then override FLEET rows to black
+dt << Select Where(:CHAMBER == "FLEET");
+dt << Colors(Gray);
+dt << Markers(Dot);
+
+// Propagate CHAMBER column + identical color/marker scheme to dt_coords
+// so wafermaps inherit chamber colors without needing a Row Legend call.
+dt_coords << New Column("CHAMBER", Character,
+    Set Each Value(
+        _orn = Column(dt_coords,"ORIGINAL_ROW_NUMBER")[Row()];
+        If(!Is Missing(_orn), Column(dt,"CHAMBER")[_orn], "FLEET")
+    )
+);
+dt_coords << Color or Mark by Column(:CHAMBER, Color Theme("JMP Vibrant"(1)), Marker Theme("Solid"), Continuous Scale(0));
+dt_coords << Select Where(:CHAMBER == "FLEET");
+dt_coords << Colors(Gray);
+dt_coords << Markers(Dot);
+dt_coords << Clear Select;
+
+// Hide/exclude FLEET coordinate rows when "Show FLEET Coordinates" is unchecked (default)
+If(val_show_fleet == 0,
+    dt_coords << Select Where(:CHAMBER == "FLEET");
+    dt_coords << Hide and Exclude;
+    dt_coords << Clear Select;
+);
+
+dt << Set Name(selected_member || " - " || window_title || " Data"); dt << Set Label Columns( :LOT );
+
+// ============================================================
+// HIGHFLIER / BASELINE FILTER
+// 1 = Hide Highfliers NOT in chamber_list  (default)
+// 2 = Hide ALL Highfliers
+// 3 = Hide BASELINE rows
+// 4 = Hide / Exclude nothing (show all rows)
+// Applied identically to both the NCDD summary and Defect Coordinates tables
+// ============================================================
+If(val_hide_status == 1,
+	dt << Select Where(:STATUS == "HIGHFLIER" & :CHAMBER == "FLEET");
+    dt << Hide and Exclude;
+    dt << Clear Select;
+	dt_coords << Select Where(:STATUS == "HIGHFLIER" & :CHAMBER == "FLEET");
+    dt_coords << Hide and Exclude;
+    dt_coords << Clear Select;
+,
+    If(val_hide_status == 2,
+        dt << Select Where(:STATUS == "HIGHFLIER");
+        dt << Hide and Exclude;
+        dt << Clear Select;
+        dt_coords << Select Where(:STATUS == "HIGHFLIER");
+        dt_coords << Hide and Exclude;
+        dt_coords << Clear Select;
+    ,
+        If(val_hide_status == 3,
+			dt << Select Where(:STATUS == "BASELINE" | :STATUS == "BSL");
+            dt << Hide and Exclude;
+            dt << Clear Select;
+			dt_coords << Select Where(:STATUS == "BASELINE" | :STATUS == "BSL");
+            dt_coords << Hide and Exclude;
+            dt_coords << Clear Select;
+        );
+    );
+);
+// ============================================================
+// END HIGHFLIER / BASELINE FILTER
+// ============================================================
+
+// Build an explicit _INCLUDE flag per row in dt_coords so the subset
+// selection does not rely on hide/exclude row state transfer (unreliable in JMP).
+// _INCLUDE=1 means the row passes both the FLEET filter and the status filter.
+dt_coords << New Column("_INCLUDE", Numeric, Continuous,
+    Set Each Value(
+        _fleet_ok = (val_show_fleet == 1 | :CHAMBER != "FLEET");
+        _status_ok = If(val_hide_status == 1,
+			!(:STATUS == "HIGHFLIER" & :CHAMBER == "FLEET"),
+            If(val_hide_status == 2,
+                :STATUS != "HIGHFLIER",
+                If(val_hide_status == 3,
+					:STATUS != "BASELINE" & :STATUS != "BSL",
+                    1  // val_hide_status == 4: show all
+                )
+            )
+        );
+        _fleet_ok & _status_ok
+    )
+);
+
+// ============================================================
+// DEBUG — verify _INCLUDE counts before subsetting
+// ============================================================
+Print("=== SUBSET DEBUG ===");
+Print("val_show_fleet=" || Char(val_show_fleet) || "  val_hide_status=" || Char(val_hide_status));
+Print("dt_coords total rows: " || Char(N Rows(dt_coords)));
+dt_coords << Select Where(:CHAMBER == "FLEET");
+Print("dt_coords FLEET rows: " || Char(N Row(dt_coords << Get Selected Rows)));
+dt_coords << Clear Select;
+dt_coords << Select Where(:_INCLUDE == 1);
+Print("dt_coords _INCLUDE=1 rows: " || Char(N Row(dt_coords << Get Selected Rows)));
+dt_coords << Clear Select;
+// ============================================================
+
+// Create subset tables using the explicit _INCLUDE filter.
+// ALL DEFECTS gets its own subset too — using dt_coords directly in the
+// Bivariate wafermap doesn't honor hide/exclude row states in JMP.
+dt_coords << Select Where(:_INCLUDE == 1);
+::_dt_coords_all = dt_coords << Subset(
+    Selected Rows,
+    Output Table("All Coords"),
+    Invisible
+);
+dt_coords << Clear Select;
+
+dt_coords << Select Where(:CLASS == "SMALL_PARTICLE" & :_INCLUDE == 1);
+::_dt_coords_smp = dt_coords << Subset(
+    Selected Rows,
+    Output Table("SMP Coords"),
+    Invisible
+);
+dt_coords << Clear Select;
+
+dt_coords << Select Where(:CLASS == "BEEP" & :_INCLUDE == 1);
+::_dt_coords_beep = dt_coords << Subset(
+    Selected Rows,
+    Output Table("BEEP Coords"),
+    Invisible
+);
+dt_coords << Clear Select;
+
+// Clean up temporary column — not needed downstream.
+dt_coords << Delete Columns({"_INCLUDE"});
+
+// ============================================================
+// DEBUG — verify FLEET rows are absent from subset tables
+// ============================================================
+::_dt_coords_all << Select Where(:CHAMBER == "FLEET");
+Print("_dt_coords_all rows: " || Char(N Rows(::_dt_coords_all)));
+Print("_dt_coords_all FLEET rows (should be 0): " || Char(N Row(::_dt_coords_all << Get Selected Rows)));
+::_dt_coords_all << Clear Select;
+::_dt_coords_smp << Select Where(:CHAMBER == "FLEET");
+Print("_dt_coords_smp rows: " || Char(N Rows(::_dt_coords_smp)));
+Print("_dt_coords_smp FLEET rows (should be 0): " || Char(N Row(::_dt_coords_smp << Get Selected Rows)));
+::_dt_coords_smp << Clear Select;
+::_dt_coords_beep << Select Where(:CHAMBER == "FLEET");
+Print("_dt_coords_beep rows: " || Char(N Rows(::_dt_coords_beep)));
+Print("_dt_coords_beep FLEET rows (should be 0): " || Char(N Row(::_dt_coords_beep << Get Selected Rows)));
+::_dt_coords_beep << Clear Select;
+Print("=== SUBSET DEBUG END ===");
+// ============================================================
+
+// Set label columns on all four coord tables (LOT + WAFER_ID).
+dt_coords         << Set Label Columns(:LOT, :WAFER_ID);
+::_dt_coords_all  << Set Label Columns(:LOT, :WAFER_ID);
+::_dt_coords_smp  << Set Label Columns(:LOT, :WAFER_ID);
+::_dt_coords_beep << Set Label Columns(:LOT, :WAFER_ID);
+
+Apply_Wafermap_Point_Styling = Function({coord_table},
+	coord_table << Select Where(:CLASS == "BEEP");
+	coord_table << Markers(1);
+	coord_table << Clear Select;
+
+	coord_table << Select Where(:CLASS == "SMALL_PARTICLE");
+	coord_table << Markers(Dot);
+	coord_table << Clear Select;
+
+	If(val_black_wafermap_markers == 1,
+		coord_table << Select All Rows;
+		coord_table << Colors(Black);
+		coord_table << Clear Select;
+	);
+);
+
+Apply_Wafermap_Point_Styling(dt_coords);
+Apply_Wafermap_Point_Styling(::_dt_coords_all);
+Apply_Wafermap_Point_Styling(::_dt_coords_smp);
+Apply_Wafermap_Point_Styling(::_dt_coords_beep);
+
+
+// Path to the organized defect image folder used by the integrated pipeline
+defect_images_folder = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\Defects\BE\images\defects";
+
+NCDD_win=New Window(selected_member || " - " || window_title,
+    lb = V List Box(
+
+        // ---------------------------------------------------------------
+		// DEFECT IMAGE FOLDER SHORTCUT — button opens the migrated image folder in Windows Explorer
+        H List Box(
+            Button Box("Open DefectImages Folder",
+                Run Program(
+                    Executable("cmd.exe"),
+                    Options({"/c", "start", "", defect_images_folder})
+                );
+            ),
+        ),
+
+		//STARTING BY PROD CHART TIME TRENDS -
+		myTitle = "ALL PRODUCTS "||filter_str;
+
+
+		
+				
+
+V List Box(		
+
+	///////////////////////////////////////////////////////////////////////////////
+	//INFO BOX ////////////////////////////////////////////////////////////////////
+	///////////////////////////////////////////////////////////////////////////////	
+    dt << FitGroup(
+
+	dt << Distribution(Stack( 1 ),Arrange in Rows( 9 ),	
+		Nominal Distribution(Column( :SUBENTITY ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 0 )),
+		Nominal Distribution(Column( :PILOT_STATUS ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 0 )),
+		Nominal Distribution(Column( :RECIPE ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 0 )),			
+		Title("AME"), ,SendToReport(Dispatch({},"AME",OutlineBox,{Close( 1 )})), 
+			),
+			dt << Distribution(Stack( 1 ),Arrange in Rows( 4 ),
+		Nominal Distribution(Column( :STATUS ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 0 )),
+		Nominal Distribution(Column( :LAYER ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 0 )),		
+		Nominal Distribution(Column( :PRODUCT ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 0 )),
+		Title("LOT"),SendToReport(Dispatch({},"LOT",OutlineBox,{Close( 1 )})),
+		),
+// closes distribution
+						SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( filter_str ), Close ( 0 ) })), <<{Arrange in Rows( 3 )});,//closes Fit Group
+	///////////////////////////////////////////////////////////////////////////////
+	//END INFO BOX ////////////////////////////////////////////////////////////////
+	///////////////////////////////////////////////////////////////////////////////	
+	
+	///////////////////////////////////////////////////////////////////////////////
+	//SUM TREND AND VAR CHART FIT GROUPS///////////////////////////////////////////
+	///////////////////////////////////////////////////////////////////////////////
+
+	H List Box(
+	fg_trend_sum= dt << FitGroup(
+	
+		//needs to make bivs by chart product, here (ALL DEFECTS wafermap is col 2 — before var charts)
+		trend_sum=Bivariate(Y( Column( ycol0)),X( Column ( xcol ) ),By( Column ( bycol1 )),
+			GroupBy( Column( legendcol1) ), // The column to group by
+			Fit Spline(0.1, Standardized, {Report( 0 ), Line Width( 0.1)}),
+			//Fit Where(:Chamber == chamber_str, Fit Spline(0.1, Standardized, {Report( 0 ), Line Color( "Black" ), Report( 0 )})), 
+			//Fit Where(:Chamber == "FLEET", Fit Spline(0.1, Standardized, {Report( 0 ), Line Color( "Blue" ), Report( 0 )}))				
+			),
+
+		SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "TREND BY "||bycol1 ), Close ( 0 ) })),), 
+	
+	fg_wmap_all = ::_dt_coords_all << FitGroup(
+		wmap_all = ::_dt_coords_all << Bivariate(
+			Y( :WAFER_Y_MM ), X( :WAFER_X_MM ), By( :LAYER ),
+		),
+		SendToReport(Dispatch({}, "Fit Group", OutlineBox, {Set Title("ALL DEFECTS")})),
+	),
+
+	fg_var_sum= dt << FitGroup(
+			var_sum = dt << Variability Chart(
+				Y( Column( ycol0) ),X( Column ( vcol1 )),
+					SendToByGroup({Column( bycol1)== "8M5CL"},Variability Analysis(:SUM_NCDD,Connect Cell Means( 1 ),Points Jittered( 1 ),Show Box Plots( 1 ))),
+					SendToByGroup({Column( bycol1)== "8M6CL"},Variability Analysis(:SUM_NCDD,Connect Cell Means( 1 ),Points Jittered( 1 ),Show Box Plots( 1 ))),
+			By ( Column( bycol1)) ,
+			),
+		SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "SUM BY "||bycol1 ), Close ( 0 ) })), ),
+		
+	fg_var_sum_prod= dt << FitGroup(
+		var_sum_prod = dt << Variability Chart(
+			Y( Column( ycol0) ),X( Column ( vcol2 )),
+				SendToByGroup({Column( bycol1)== "8M5CL"},Variability Analysis(:SUM_NCDD,Connect Cell Means( 1 ),Points Jittered( 1 ),Show Box Plots( 1 ))),
+				SendToByGroup({Column( bycol1)== "8M6CL"},Variability Analysis(:SUM_NCDD,Connect Cell Means( 1 ),Points Jittered( 1 ),Show Box Plots( 1 ))),
+		By ( Column( bycol1)) ,
+		),
+	SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "SUM BY "||vcol2 ), Close ( 0 ) })), );
+	) // Hlist end 
+			,
+			
+	
+	///////////////////////////////////////////////////////////////////////////////
+	//END SUM TREND AND VAR CHART FIT GROUPS///////////////////////////////////////
+	///////////////////////////////////////////////////////////////////////////////
+
+	///////////////////////////////////////////////////////////////////////////////
+	//SMP TREND AND VAR CHART FIT GROUPS///////////////////////////////////////////
+	///////////////////////////////////////////////////////////////////////////////
+
+	H List Box(
+	fg_trend_smp= dt << FitGroup(
+	
+		//needs to make bivs by chart product, here
+		trend_smp=Bivariate(Y( Column( ycol1)),X( Column ( xcol ) ),By( Column ( bycol1 )),
+			GroupBy( Column( legendcol1) ), // The column to group by
+			Fit Spline(0.1, Standardized, {Report( 0 ), Line Width( 0.1)}),
+			//Fit Where(:Chamber == chamber_str, Fit Spline(0.1, Standardized, {Report( 0 ), Line Color( "Black" ), Report( 0 )})), 
+			//Fit Where(:Chamber == "FLEET", Fit Spline(0.1, Standardized, {Report( 0 ), Line Color( "Blue" ), Report( 0 )}))				
+			),
+
+		SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "TREND BY "||bycol1 ), Close ( 0 ) })),), 
+	
+	fg_wmap_smp = ::_dt_coords_smp << FitGroup(
+		wmap_smp = ::_dt_coords_smp << Bivariate(
+			Y( :WAFER_Y_MM ), X( :WAFER_X_MM ), By( :LAYER ),
+		),
+		SendToReport(Dispatch({}, "Fit Group", OutlineBox, {Set Title("SMP DEFECTS")})),
+	),
+
+	fg_var_smp= dt << FitGroup(
+			var_smp = dt << Variability Chart(
+				Y( Column( ycol1) ),X( Column ( vcol1 )),
+					SendToByGroup({Column( bycol1)== "8M5CL"},Variability Analysis(:SMP_NCDD,Connect Cell Means( 1 ),Points Jittered( 1 ),Show Box Plots( 1 ))),
+					SendToByGroup({Column( bycol1)== "8M6CL"},Variability Analysis(:SMP_NCDD,Connect Cell Means( 1 ),Points Jittered( 1 ),Show Box Plots( 1 ))),
+			By ( Column( bycol1)) ,
+			),
+		SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "SMP BY "||bycol1 ), Close ( 0 ) })), ),
+
+	fg_var_smp_prod= dt << FitGroup(
+			var_smp_prod = dt << Variability Chart(
+				Y( Column( ycol1) ),X( Column ( vcol2 )),
+					SendToByGroup({Column( bycol1)== "8M5CL"},Variability Analysis(:SMP_NCDD,Connect Cell Means( 1 ),Points Jittered( 1 ),Show Box Plots( 1 ))),
+					SendToByGroup({Column( bycol1)== "8M6CL"},Variability Analysis(:SMP_NCDD,Connect Cell Means( 1 ),Points Jittered( 1 ),Show Box Plots( 1 ))),
+			By ( Column( bycol1)) ,
+			),
+		SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "SMP BY "||vcol2 ), Close ( 0 ) })), );
+	) // Hlist end
+			,
+	///////////////////////////////////////////////////////////////////////////////
+	//END SMP TREND AND VAR CHART FIT GROUPS///////////////////////////////////////
+	///////////////////////////////////////////////////////////////////////////////
+
+	///////////////////////////////////////////////////////////////////////////////
+	//BEEP TREND AND VAR CHART FIT GROUPS//////////////////////////////////////////
+	///////////////////////////////////////////////////////////////////////////////
+	H List Box(
+	fg_trend_beep= dt << FitGroup(
+	
+		//needs to make bivs by chart product, here
+		trend_beep=Bivariate(Y(Column( ycol2)  ),X( Column ( xcol ) ),By( Column ( bycol1 )),
+			GroupBy( Column( legendcol1) ), // The column to group by
+			Fit Spline(0.1, Standardized, {Report( 0 ), Line Width( 0.1)}),
+			//Fit Where(:Chamber == chamber_str, Fit Spline(0.1, Standardized, {Report( 0 ), Line Color( "Black" ), Report( 0 )})), 
+			//Fit Where(:Chamber == "FLEET", Fit Spline(0.1, Standardized, {Report( 0 ), Line Color( "Blue" ), Report( 0 )}))				
+			),
+
+		SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "TREND BY "||bycol1 ), Close ( 0 ) })),), 
+
+	fg_wmap_beep = ::_dt_coords_beep << FitGroup(
+		wmap_beep = ::_dt_coords_beep << Bivariate(
+			Y( :WAFER_Y_MM ), X( :WAFER_X_MM ), By( :LAYER ),
+		),
+		SendToReport(Dispatch({}, "Fit Group", OutlineBox, {Set Title("BEEP DEFECTS")})),
+	),
+
+	fg_var_beep= dt << FitGroup(
+			var_beep = dt << Variability Chart(
+				Y( Column( ycol2) ),X( Column ( vcol1 )),
+					SendToByGroup({Column( bycol1)== "8M5CL"},Variability Analysis(:BEEP_NCDD,Connect Cell Means( 1 ),Points Jittered( 1 ),Show Box Plots( 1 ))),
+					SendToByGroup({Column( bycol1)== "8M6CL"},Variability Analysis(:BEEP_NCDD,Connect Cell Means( 1 ),Points Jittered( 1 ),Show Box Plots( 1 ))),
+				By ( Column( bycol1)) ,
+			),
+		SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "BEEP BY "||bycol1 ), Close ( 0 ) })), ),
+
+	fg_var_beep_prod= dt << FitGroup(
+			var_beep_prod = dt << Variability Chart(
+				Y( Column( ycol2) ),X( Column ( vcol2 )),
+					SendToByGroup({Column( bycol1)== "8M5CL"},Variability Analysis(:BEEP_NCDD,Connect Cell Means( 1 ),Points Jittered( 1 ),Show Box Plots( 1 ))),
+					SendToByGroup({Column( bycol1)== "8M6CL"},Variability Analysis(:BEEP_NCDD,Connect Cell Means( 1 ),Points Jittered( 1 ),Show Box Plots( 1 ))),
+				By ( Column( bycol1)) ,
+			),
+		SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "BEEP BY "||vcol2 ), Close ( 0 ) })), );
+	) // Hlist end
+		,
+	///////////////////////////////////////////////////////////////////////////////
+	//END BEEP TREND AND VAR CHART FIT GROUPS//////////////////////////////////////
+	///////////////////////////////////////////////////////////////////////////////
+
+	) // closes V list box
+	   
+	)   // closes outer V list box 
+); // closes window
+
+
+trend_row_heights = Associative Array();
+var_row_heights = Associative Array();
+wmap_row_heights = Associative Array();
+row_target_heights = Associative Array();
+
+trend_reports_by_row = Associative Array();
+var_reports_by_row = Associative Array();
+wmap_reports_by_row = Associative Array();
+
+Build_Row_Height_Key = Function({metric_label, layer_label},
+	Trim(metric_label) || "|" || Trim(layer_label)
+);
+
+Get_Report_Height = Function({rpt},
+	Wait(0);
+	_size = rpt << Get Size;
+	If(Is List(_size) & N Items(_size) >= 2,
+		_size[2],
+		.
+	)
+);
+
+Update_Row_Target_Height = Function({row_key},
+	_target = .;
+	Try(_th = trend_row_heights[row_key], _th = .);
+	If(!Is Missing(_th), _target = _th);
+	Try(_vh = var_row_heights[row_key], _vh = .);
+	If(!Is Missing(_vh),
+		If(Is Missing(_target), _target = _vh, _target = Max(_target, _vh));
+	);
+	Try(_wh = wmap_row_heights[row_key], _wh = .);
+	If(!Is Missing(_wh),
+		If(Is Missing(_target), _target = _wh, _target = Max(_target, _wh));
+	);
+	If(!Is Missing(_target),
+		row_target_heights[row_key] = _target;
+	);
+	_target;
+);
+
+Apply_Target_Trend_Report_Height = Function({rpt, metric_label, layer_label},
+	_target_key = Build_Row_Height_Key(metric_label, layer_label);
+	_target_height = row_target_heights[_target_key];
+	If(Is Missing(_target_height),
+		_target_height = trend_row_heights[_target_key];
+	);
+	If(Is Missing(_target_height), Return());
+
+	_current_height = Get_Report_Height(rpt);
+	If(Is Missing(_current_height), Return());
+
+	If(_current_height < _target_height,
+		_delta_height = _target_height - _current_height;
+		Try(rpt << Set Height(_target_height));
+		Try(rpt << Append(Spacer Box(Size(1, _delta_height))));
+	,
+		If(_current_height > _target_height,
+			Try(rpt << Set Height(_target_height));
+		);
+	);
+);
+
+Apply_Target_Variability_Report_Height = Function({rpt, metric_label, layer_label},
+	_target_key = Build_Row_Height_Key(metric_label, layer_label);
+	_target_height = row_target_heights[_target_key];
+	If(Is Missing(_target_height),
+		_target_height = trend_row_heights[_target_key];
+	);
+	If(Is Missing(_target_height),
+		Return()
+	);
+
+	_current_height = Get_Report_Height(rpt);
+	If(Is Missing(_current_height),
+		Return()
+	);
+
+	If(_current_height < _target_height,
+		_delta_height = _target_height - _current_height;
+		// Keep variability chart geometry stable; align rows by adding only
+		// outer vertical padding instead of stretching the data frame.
+		Try(rpt << Set Height(_target_height));
+		Try(rpt << Append(Spacer Box(Size(1, _delta_height))));
+	,
+		If(_current_height > _target_height,
+			Try(rpt << Set Height(_target_height));
+		);
+	);
+);
+
+Apply_Target_Wafermap_Report_Height = Function({rpt, metric_label, layer_label},
+	_target_key = Build_Row_Height_Key(metric_label, layer_label);
+	_target_height = row_target_heights[_target_key];
+	If(Is Missing(_target_height),
+		_target_height = trend_row_heights[_target_key];
+	);
+	If(Is Missing(_target_height),
+		Return()
+	);
+
+	_current_height = Get_Report_Height(rpt);
+	If(Is Missing(_current_height),
+		Return()
+	);
+
+	If(_current_height < _target_height,
+		_delta_height = _target_height - _current_height;
+		// Keep wafermap frame square; add vertical padding outside the frame.
+		Try(rpt << Set Height(_target_height));
+		Try(rpt << Append(Spacer Box(Size(1, _delta_height))));
+	,
+		If(_current_height > _target_height,
+			Try(rpt << Set Height(_target_height));
+		);
+	);
+);
+
+Align_All_Row_Heights = Function({},
+	Try(_row_keys = row_target_heights << Get Keys, _row_keys = {});
+	For(_i = 1, _i <= N Items(_row_keys), _i++,
+		_row_key = _row_keys[_i];
+		_metric_label = Word(1, _row_key, "|");
+		_layer_label = Word(2, _row_key, "|");
+
+		Try(_tr = trend_reports_by_row[_row_key], _tr = .);
+		Try(_vr = var_reports_by_row[_row_key], _vr = .);
+		Try(_wr = wmap_reports_by_row[_row_key], _wr = .);
+
+		Try(If(!Is Missing(_tr), Apply_Target_Trend_Report_Height(_tr, _metric_label, _layer_label)));
+		Try(If(!Is Missing(_vr), Apply_Target_Variability_Report_Height(_vr, _metric_label, _layer_label)));
+		Try(If(!Is Missing(_wr), Apply_Target_Wafermap_Report_Height(_wr, _metric_label, _layer_label)));
+
+		Try(If(!Is Missing(_tr), trend_row_heights[_row_key] = Get_Report_Height(_tr)));
+		Try(If(!Is Missing(_vr), var_row_heights[_row_key] = Get_Report_Height(_vr)));
+		Try(If(!Is Missing(_wr), wmap_row_heights[_row_key] = Get_Report_Height(_wr)));
+		Update_Row_Target_Height(_row_key);
+	);
+);
+
+
+
+Format_Trend_Charts = Function({trend_chart_object},
+
+	Treports = trend_chart_object << Report;
+	//(reports << XPath("//OutlineBox[contains(., 'Smoothing Spline Fit')]")) << Visibility("Collapse");
+	j=0; Show(N Items(Treports));
+	For Each( {rpt}, Treports,
+		j=j+1;
+		current_by_value = rpt << Get Title;
+
+		//Print(current_by_value,bycol,title);
+		//fbTitles 		= {};			
+		//preorder(rpt[1]); 			Print("\!n", fbTitles);
+		rpt[1][Frame Box(1)]  << Row Legend(Column ( legendcol1 ),Color( 0 ),Color Theme( "" ),Marker( 0 ),Marker Theme( "" ),Continuous Scale( 0 ),Reverse Scale( 0 ),Excluded Rows( 0 ));
+		//rpt[1][Frame Box(1)] << {Marker Size(3), Marker Drawing Mode("Outlined"),Fill Selection Mode("Selected Outlined")};
+		rpt[1][Frame Box(1)] << {Marker Drawing Mode("Outlined")};
+		
+		// Find positions of "of " and " By"
+		of_pos = Contains(current_by_value, "of ");
+		by_pos = Contains(current_by_value, " By ");
+
+		// Extract Y column name between "of " and " By"
+		y_col_name = Substr(current_by_value, of_pos + 3, by_pos - of_pos - 3);
+		layer_value = Word(-1, current_by_value, "=");
+		y_col_display = Substitute(y_col_name, "_", " ");
+		new_title = y_col_display || " " || layer_value;
+		
+		rpt << Set Title( new_title );	
+
+	rpt[AxisBox(1)] << Axis Settings({Min(ymin), Max(ymax), Inc(inc),Minor Ticks(0)});
+		
+	axisbox = rpt[axis box( 1 )]; axisbox << Show Major Grid( 1 );
+	axisbox = rpt[axis box( 1 )]; axisbox << Show Minor Grid( 1 );
+	axisbox = rpt[axis box( 2 )]; axisbox << Show Major Grid( 1 );
+	axisbox = rpt[axis box( 2 )]; axisbox << Show Minor Grid( 1 );
+
+	Try(rpt[BorderBox(3)] << Visibility("Collapse"));
+
+	rpt[FrameBox(1)]  <<Set Height( 330 ); rpt[FrameBox(1)]  <<Set Width( 500 );
+	_trend_row_key = Build_Row_Height_Key(y_col_display, layer_value);
+	trend_row_heights[_trend_row_key] = Get_Report_Height(rpt);
+	trend_reports_by_row[_trend_row_key] = rpt;
+	Update_Row_Target_Height(_trend_row_key);
+
+	// rqt[BorderBox(1)] << Show Window
+	);//end for each	
+);	
+Format_Trend_Charts(trend_sum);
+Format_Trend_Charts(trend_smp);
+Format_Trend_Charts(trend_beep);
+	
+
+
+Format_Variability_Charts = Function({var_chart_object, ycol_label, top_level_group_label},
+			
+	Vreports=var_chart_object << Report;
+	//(reports << XPath("//OutlineBox[contains(., 'Smoothing Spline Fit')]")) << Visibility("Collapse");
+	j=0; Show(N Items(Vreports));
+	For Each( {rpt}, Vreports,
+		j=j+1;
+		current_by_value = rpt << Get Title;
+			
+
+		//Print(current_by_value,bycol,title);
+		//fbTitles 		= {};			//preorder(rpt[1]); 			Print("\!n", fbTitles);
+		//rpt[1][Frame Box(1)]  << Row Legend(Column ( legendcol1 ),Color( 0 ),Color Theme( "" ),Marker( 0 ),Marker Theme( "" ),Continuous Scale( 0 ),Reverse Scale( 0 ),Excluded Rows( 0 ));
+	//	rpt[1][Frame Box(1)]  << Row Legend(Column ( legendcol2 ),Color( 0 ),Color Theme( "" ),Marker( 0 ),Marker Theme( "" ),Continuous Scale( 0 ),Reverse Scale( 0 ),Excluded Rows( 0 ));
+		rpt[1][Frame Box(1)] << {Marker Drawing Mode("Outlined")};
+
+		layer_value = "";
+		If(Contains(current_by_value, "=") > 0,
+			layer_value = Trim(Word(-1, current_by_value, "="));
+		);
+
+		rpt << Set Title( "VARIABILITY BY " || top_level_group_label );		
+		
+			
+			//reports[1][OutlineBox(1)] << Set Title ("STLT MEAN by SUBENTITY");
+			rpt[1][OutlineBox(1)] << Set Title ("ANALYSIS");
+			If(layer_value == "",
+				rpt[1][OutlineBox(2)] << Set Title (ycol_label);
+			,
+				rpt[1][OutlineBox(2)] << Set Title (ycol_label || " " || layer_value);
+			);
+			//rpt[1][OutlineBox(2)] << Set Title Wrap(0);
+			rpt[1][TextBox(2)] << Set Text("");
+			//reports[1][FrameBox(1)] << YAxis( Min( 20 ), Max( 40 ));
+			axisbox = rpt[1][axis box( 1 )]; axisbox << Show Major Grid( 1 );
+			axisbox = rpt[1][axis box( 1 )]; axisbox << Show Minor Grid( 1 );
+			axisbox = rpt[1][axis box( 2 )]; axisbox << Show Major Grid( 1 );
+			axisbox = rpt[1][axis box( 2 )]; axisbox << Show Minor Grid( 1 );
+
+			
+			rpt[AxisBox(1)] << Axis Settings({Min(ymin), Max(ymax), Inc(inc),Minor Ticks(0)});
+
+			axisbox = rpt[axis box( 1 )]; axisbox << Show Major Grid( 1 );
+			axisbox = rpt[axis box( 1 )]; axisbox << Show Minor Grid( 1 );
+			axisbox = rpt[axis box( 2 )]; axisbox << Show Major Grid( 1 );
+			axisbox = rpt[axis box( 2 )]; axisbox << Show Minor Grid( 1 );
+		
+			mySegs=rpt[FrameBox(1)]<< find segs; // get all display elements
+				Filter Each({seg},(mySegs), (seg<< class name)=="BoxPlotSeg") << Set Line Color("Black");
+			mySegs=rpt[FrameBox(1)]<< find segs; // get all display elements
+				Filter Each({seg},(mySegs), (seg<< class name)=="BoxPlotSeg") << Set Line Color("Black");
+				
+			varchart_groups=rpt[AxisBox(2)] << Get Max;
+			varchart_width=varchart_groups*varchart_group_width;
+			framebox=rpt[FrameBox(1)];
+			framebox   <<Set Width( varchart_width );
+			framebox << Get Size;
+			framebox <<Set Height( 230 );
+			_var_row_key = Build_Row_Height_Key(ycol_label, layer_value);
+			var_row_heights[_var_row_key] = Get_Report_Height(rpt);
+			var_reports_by_row[_var_row_key] = rpt;
+			Update_Row_Target_Height(_var_row_key);
+
+			
+			varchart_axisbox=rpt[AxisBox(2)];			
+			varchart_axisbox <<Set Height( 80 );
+
+	);//end for each	
+); //close function
+Format_Variability_Charts(var_sum,  "SUM NCDD", bycol1);
+Format_Variability_Charts(var_smp,  "SMP NCDD", bycol1);
+Format_Variability_Charts(var_beep, "BEEP NCDD", bycol1);
+Format_Variability_Charts(var_sum_prod,  "SUM NCDD", vcol2);
+Format_Variability_Charts(var_smp_prod,  "SMP NCDD", vcol2);
+Format_Variability_Charts(var_beep_prod, "BEEP NCDD", vcol2);
+
+
+///////////////////////////////////////////////////////////////////////////////
+// FORMAT WAFERMAP
+///////////////////////////////////////////////////////////////////////////////
+Format_Wafermap = Function({wmap_obj, metric_label},
+	Wmreports = wmap_obj << Report;
+	If(Is List(Wmreports),
+		_wm_report_list = Wmreports;
+	,
+		_wm_report_list = {Wmreports};
+	);
+	For Each({rpt}, _wm_report_list,
+		layer_val = Word(-1, rpt << Get Title, "=");
+		rpt << Set Title("WAFERMAP " || Trim(layer_val));
+
+		rpt[1][FrameBox(1)] << Frame Size(280, 280);
+		rpt[1][AxisBox(1)] << Axis Settings({Min(-165), Max(165), Inc(50), Minor Ticks(0)});
+		rpt[1][AxisBox(2)] << Axis Settings({Min(-165), Max(165), Inc(50), Minor Ticks(0)});
+		rpt[1][AxisBox(1)] << {Show Major Grid(1), Show Minor Grid(1)};
+		rpt[1][AxisBox(2)] << {Show Major Grid(1), Show Minor Grid(1)};
+
+		// Wafer boundary circle (150 mm radius)
+		rpt[1][FrameBox(1)] << Add Graphics Script(2, Description("WaferCircle"),
+			Pen Color("Dark Gray");
+			Pen Size(2);
+			Oval(-150, -150, 150, 150);
+		);
+
+		If(val_black_wafermap_markers == 0,
+			// Legend shows CLASS labels for verification; Color(0)/Marker(0) prevent
+			// overwriting the pre-set CHAMBER row states on dt_coords.
+			rpt[1][FrameBox(1)] << Row Legend(:CLASS,
+				Color(0), Color Theme(""),
+				Marker(0), Marker Theme(""),
+				Continuous Scale(0), Reverse Scale(0), Excluded Rows(0)
+			);
+		);
+		rpt[1][FrameBox(1)] << {Marker Drawing Mode("Normal")};
+
+		// Square frame matching trend chart height (330×330)
+		rpt[1][FrameBox(1)] << Frame Size(330, 330);
+
+		// Remove fit summary text box
+		rpt[1][TextBox(1)] << Set Text("");
+		_wm_row_key = Build_Row_Height_Key(metric_label, layer_val);
+		wmap_row_heights[_wm_row_key] = Get_Report_Height(rpt);
+		wmap_reports_by_row[_wm_row_key] = rpt;
+		Update_Row_Target_Height(_wm_row_key);
+	);
+);
+Format_Wafermap(wmap_all, "SUM NCDD");
+Format_Wafermap(wmap_smp, "SMP NCDD");
+Format_Wafermap(wmap_beep, "BEEP NCDD");
+Align_All_Row_Heights();
+
+
+// Maximize the window after creation
+NCDD_win << Maximize Window;
+
+dt << Select Where(:CHAMBER != "FLEET");
+
+
+
+// Usage tracking - final version
+log_path = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\backups\BEEP_SMP_LAYER_CHAMBER_log.txt";
+
+track_usage = Function({},
+    Try(
+        timestamp = Char(Today());
+        log_entry = timestamp || " - Script usage" || "\n";
+        
+        // Check if file exists to append or create
+        If(File Exists(log_path),
+            current_content = Load Text File(log_path);
+            new_content = current_content || log_entry;
+            Save Text File(log_path, new_content);
+        ,
+            Save Text File(log_path, log_entry);
+        );
+    ,
+        // Silent fail if there are any issues
+    );
+);
+
+// Call this at the beginning of your main script
+track_usage();
+
+// ============================================================
+// BIDIRECTIONAL SELECTION SYNC — NCDD <-> Defect Coordinates
+//
+// Uses Make Row State Handler (native JMP API) which fires on
+// ALL row state changes: chart point clicks, variability chart
+// clicks, data-grid row clicks, and JSL SelectRows calls.
+// Set Selection Handler only fires on data-grid clicks — that's
+// why chart selections were not propagating before.
+//
+// Propagation uses ORIGINAL_ROW_NUMBER (built at startup above)
+// so coord rows are selected with a single O(1) Contains call.
+// ============================================================
+
+::_dt_ncdd        = dt;
+::_dt_coords      = dt_coords;
+::_dt_coords_all  = ::_dt_coords_all;   // already set above
+::_dt_coords_smp  = ::_dt_coords_smp;   // already set above
+::_dt_coords_beep = ::_dt_coords_beep;  // already set above
+::_prev_sel       = [];
+
+::_rsh = ::_dt_ncdd << Make Row State Handler(
+    Function({rows}, {Default Local},
+        sel = ::_dt_ncdd << Get Selected Rows;
+
+        // Delta guard — skip if selection hasn't actually changed
+        If(
+            N Row(sel) == N Row(::_prev_sel) &
+            (N Row(sel) == 0 | All(sel == ::_prev_sel)),
+            Return();
+        );
+        ::_prev_sel = sel;
+
+        Print("MakeRowStateHandler: " || Char(N Row(sel)) || " NCDD rows selected");
+        If(N Row(sel) > 0,
+            // Build a list of integers from the selected-row matrix.
+            // Contains() requires a List {}, not a matrix [], to match
+            // the numeric column values stored as floats in dt_coords.
+            _sel_list = {};
+            For(_i = 1, _i <= N Row(sel), _i++,
+                Insert Into(_sel_list, sel[_i]);
+            );
+            ::_dt_coords << Select Where(
+                Contains(_sel_list, Round(Column(::_dt_coords,"ORIGINAL_ROW_NUMBER")[Row()], 0))
+            );
+            ::_dt_coords_all << Select Where(
+                Contains(_sel_list, Round(Column(::_dt_coords_all,"ORIGINAL_ROW_NUMBER")[Row()], 0))
+            );
+            ::_dt_coords_smp << Select Where(
+                Contains(_sel_list, Round(Column(::_dt_coords_smp,"ORIGINAL_ROW_NUMBER")[Row()], 0))
+            );
+            ::_dt_coords_beep << Select Where(
+                Contains(_sel_list, Round(Column(::_dt_coords_beep,"ORIGINAL_ROW_NUMBER")[Row()], 0))
+            );
+            Print("  -> " || Char(N Rows(::_dt_coords_all << Get Selected Rows)) || " coord rows");
+        ,
+            ::_dt_coords      << Clear Select;
+            ::_dt_coords_all  << Clear Select;
+            ::_dt_coords_smp  << Clear Select;
+            ::_dt_coords_beep << Clear Select;
+        );
+    )
+);
+
+Print("MakeRowStateHandler installed on: " || (::_dt_ncdd << Get Name));
+
+// Immediately propagate the existing non-FLEET selection into dt_coords
+_init_sel = ::_dt_ncdd << Get Selected Rows;
+If(N Row(_init_sel) > 0,
+    _init_list = {};
+    For(_i = 1, _i <= N Row(_init_sel), _i++, Insert Into(_init_list, _init_sel[_i]));
+    ::_dt_coords << Select Where(
+        Contains(_init_list, Round(Column(::_dt_coords,"ORIGINAL_ROW_NUMBER")[Row()], 0))
+    );
+    ::_dt_coords_all << Select Where(
+        Contains(_init_list, Round(Column(::_dt_coords_all,"ORIGINAL_ROW_NUMBER")[Row()], 0))
+    );
+    ::_dt_coords_smp << Select Where(
+        Contains(_init_list, Round(Column(::_dt_coords_smp,"ORIGINAL_ROW_NUMBER")[Row()], 0))
+    );
+    ::_dt_coords_beep << Select Where(
+        Contains(_init_list, Round(Column(::_dt_coords_beep,"ORIGINAL_ROW_NUMBER")[Row()], 0))
+    );
+    Print("Initial sync: " || Char(N Rows(::_dt_coords_all << Get Selected Rows)) || " coord rows selected");
+);
+
+
