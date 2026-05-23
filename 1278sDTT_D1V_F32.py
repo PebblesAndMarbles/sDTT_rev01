@@ -113,7 +113,7 @@ class SDTTProcessor:
         self.config = config
         self.site = site
         self.database_connection = config['database_connections'][site]
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger(f"sDTT_{site}_ENGINE")
         # Ensure output directories exist (important when called from pipeline
         # which may redirect main_csv_path to a newly created folder).
         os.makedirs(config['folder_path'], exist_ok=True)
@@ -127,12 +127,24 @@ class SDTTProcessor:
         self.logger.debug(f"Paths initialized - Working: {self.folder_path}, Main: {self.main_csv_path}")
         
     def main_df_to_csv(self, df, name, no_index=None, show=None):
-        """Save DataFrame to main CSV location"""
+        """Save DataFrame to main CSV location using atomic replace for safety."""
         csvwritefile = os.path.join(self.main_csv_path, f'{name}.csv')
-        if no_index == 1:
-            df.to_csv(csvwritefile, index=False)
-        else:
-            df.to_csv(csvwritefile)
+        tmpfile = csvwritefile + '.tmp'
+        try:
+            if no_index == 1:
+                df.to_csv(tmpfile, index=False)
+            else:
+                df.to_csv(tmpfile)
+            os.replace(tmpfile, csvwritefile)
+        except KeyboardInterrupt:
+            # Preserve the previous CSV if write is interrupted mid-stream.
+            if os.path.exists(tmpfile):
+                try:
+                    os.remove(tmpfile)
+                except Exception:
+                    pass
+            self.logger.error(f"CSV write interrupted for {csvwritefile}; existing file left unchanged")
+            raise
         self.logger.debug(f"Saved DataFrame to main CSV: {csvwritefile} ({len(df)} rows)")
         if show == 1:
             os.startfile(csvwritefile)
@@ -141,7 +153,7 @@ class SDTTProcessor:
         """Load DataFrame from main CSV location with existence check"""
         csvreadfile = os.path.join(self.main_csv_path, f'{name}.csv')
         if os.path.exists(csvreadfile):
-            df = pd.read_csv(csvreadfile)
+            df = pd.read_csv(csvreadfile, low_memory=False)
             self.logger.info(f"Loaded existing CSV: {csvreadfile} ({len(df)} rows)")
             return df
         else:
@@ -164,7 +176,7 @@ class SDTTProcessor:
     def csv_to_df(self, name):
         """Load DataFrame from working folder"""
         csvreadfile = os.path.join(self.folder_path, f'{name}.csv')
-        df = pd.read_csv(csvreadfile)
+        df = pd.read_csv(csvreadfile, low_memory=False)
         self.logger.debug(f"Loaded DataFrame from working folder: {name}.csv ({len(df)} rows)")
         return df
 
@@ -605,14 +617,6 @@ def main(config=None):
     if config is None:
         config = CONFIG
 
-    # Initialize logging first
-    logger = setup_logging(config.get('log_level', 'INFO'))
-    
-    logger.info("="*80)
-    logger.info("SDTT Data Processing Script Started")
-    logger.info("="*80)
-    logger.info(f"Configuration: {config}")
-    
     # Setup warning filters based on config
     setup_warning_filters(config['suppress_sqlalchemy_warnings'])
 
@@ -622,21 +626,24 @@ def main(config=None):
                                           config['layerRange'][1] if len(config['layerRange']) > 1 else None)
     if config['incBM0'] == 1:
         layerList.append("BM0")
-    
-    logger.info(f"Processing layers: {layerList}")
-    logger.info(f"Tech alias: {tech1}, Days: {config['days']}, Chunk size: {config['nLots_chunk']}")
-    
-    # Process each site
+
     for site in config['sites']:
+        logger = logging.getLogger(f"sDTT_{site}_ENGINE")
+        logger.info("="*80)
+        logger.info("SDTT Data Processing Script Started")
+        logger.info("="*80)
+        logger.info(f"Configuration: {config}")
+        logger.info(f"Processing layers: {layerList}")
+        logger.info(f"Tech alias: {tech1}, Days: {config['days']}, Chunk size: {config['nLots_chunk']}")
         logger.info(f"{'='*80}")
         logger.info(f"Processing Site: {site}")
         logger.info(f"Database Connection: {config['database_connections'][site]}")
         logger.info(f"{'='*80}")
-        
+
         # Initialize processor for this site
         processor = SDTTProcessor(config, site)
         data_processor = DataProcessor()
-        
+
         # ── Per-layer CD temp CSV approach ────────────────────────────────
         # Instead of accumulating ALL layer DataFrames in a dict (which holds
         # the full dataset in RAM simultaneously for all layers), we:
@@ -970,6 +977,11 @@ def process_chunk_data(processor, data_processor, lot_chunk_str, mops_str, wec_o
     spcs_id_str = ','.join(f"{item}" for item in spcs)
     logger.info(f"Lot run card data retrieved: {len(df_lot_run_card)} records, {len(spcs)} unique SPCS IDs")
 
+    # Guard against invalid SQL (WHERE ... IN ()) when chunk has no SPCS IDs.
+    if len(spcs) == 0:
+        logger.warning("No SPCS IDs found for this chunk; skipping chunk to avoid empty IN() SQL")
+        return pd.DataFrame()
+
     processor.df_to_csv(df_lot_run_card, f'lot_run_card_for_spcsid_{site}')
 
     # Get and process measurements data
@@ -985,6 +997,11 @@ def process_chunk_data(processor, data_processor, lot_chunk_str, mops_str, wec_o
     wafer_chunk_str = ','.join(f"'{item}'" for item in measured_wafers)
     logger.info(f"Extracted {len(measured_wafers)} unique wafers from measurements data for WEC filtering")
     logger.debug(f"Measured wafers: {measured_wafers}")
+
+    # Avoid downstream WEC queries with empty wafer filter sets.
+    if len(measured_wafers) == 0:
+        logger.warning("No measured wafers found for this chunk; skipping chunk to avoid empty wafer IN() SQL")
+        return pd.DataFrame()
 
     df_measurements_pivot = data_processor.process_measurements_data(df_measurements_raw, processor)
     processor.df_to_csv(df_measurements_pivot, f'spc_measurements_pivot_{site}')
@@ -1198,7 +1215,7 @@ def finalize_site_data(processor, site_cd_temp_files, layerList, site, config):
     site_cd_temp_files : dict
         {cd_level: absolute_path_to_temp_csv}  — written during the layer loop.
     """
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger(f"sDTT_{site}_ENGINE")
     
     for cd_level in config['cd_levels']:
         temp_path = site_cd_temp_files.get(cd_level)
@@ -1227,7 +1244,7 @@ def finalize_site_data(processor, site_cd_temp_files, layerList, site, config):
     # Contains distinct WAFER_ID, DATA_COLLECTION_TIME, WEC_OPERATION from the
     # current run's HCCD data; consumed by run_apc_join(wafer_manifest_path=...).
     manifest_path = None
-    if site == 'D1V' and 'HCCD' in config['cd_levels']:
+    if site in ('D1V', 'F32') and 'HCCD' in config['cd_levels']:
         _hccd_temp = site_cd_temp_files.get('HCCD')
         if _hccd_temp and os.path.exists(_hccd_temp):
             try:
@@ -1238,7 +1255,7 @@ def finalize_site_data(processor, site_cd_temp_files, layerList, site, config):
                     [c for c in _manifest_cols if c in _hccd_tmp_df.columns]
                 ].drop_duplicates()
                 manifest_path = os.path.join(config['main_csv_path'],
-                                             'current_run_wafers_D1V.csv')
+                                             f'current_run_wafers_{site}.csv')
                 _manifest_df.to_csv(manifest_path, index=False)
                 logger.info(f"Run manifest written: {manifest_path} "
                             f"({len(_manifest_df)} distinct rows)")
@@ -1252,37 +1269,57 @@ def finalize_site_data(processor, site_cd_temp_files, layerList, site, config):
             logger.warning("HCCD temp CSV not available — manifest not written; "
                            "APC join will use full-file mode")
 
-    # ── APC enrichment (D1V + HCCD only) ─────────────────────────────────────
-    # After all CD-level CSVs are saved, run the APC join on the HCCD_D1V output.
+    # ── APC enrichment (D1V/F32 + HCCD) ───────────────────────────────────────
+    # After all CD-level CSVs are saved, run the APC join on the site HCCD output.
+    # Also run on the 60-day variant if it was created.
     # Failure here is non-fatal — the base CSV is already saved and the error is logged.
     # Set config['skip_apc_join'] = True to suppress (e.g. via pipeline --skip-apc).
-    if site == 'D1V' and 'HCCD' in config['cd_levels'] and not config.get('skip_apc_join', False):
-        apc_input = os.path.join(
-            config['main_csv_path'],
-            f"{config['main_csv_base_name']}_HCCD_{site}.csv"
-        )
-        if os.path.exists(apc_input):
-            logger.info("="*60)
-            logger.info(f"Starting APC join for {site}+HCCD: {apc_input}")
-            logger.info("="*60)
-            try:
-                import importlib.util as _ilu
-                _apc_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                         '1278sDTT_D1V_HCCD_APC_JOIN.py')
-                _spec = _ilu.spec_from_file_location('_apc_join_mod', _apc_path)
-                _apc_mod = _ilu.module_from_spec(_spec)
-                _spec.loader.exec_module(_apc_mod)
-                out = _apc_mod.run_apc_join(apc_input,
-                                            wafer_manifest_path=manifest_path)
-                logger.info(f"APC join completed. Output: {out}")
-            except Exception as _e:
-                logger.error(f"APC join failed (non-fatal, base CSV is intact): {_e}", exc_info=True)
-        else:
-            logger.warning(f"APC join skipped — HCCD_{site} CSV not found: {apc_input}")
+    if site in ('D1V', 'F32') and 'HCCD' in config['cd_levels'] and not config.get('skip_apc_join', False):
+        _apc_variants = [
+            f"{config['main_csv_base_name']}_HCCD_{site}.csv",  # Full dataset
+            f"{config['main_csv_base_name']}_HCCD_{site}_60day.csv",  # 60-day variant
+        ]
+        for apc_input in _apc_variants:
+            apc_input_path = os.path.join(config['main_csv_path'], apc_input)
+            if os.path.exists(apc_input_path):
+                logger.info("="*60)
+                logger.info(f"Starting APC join for {site}+HCCD: {apc_input_path}")
+                logger.info("="*60)
+                try:
+                    import importlib.util as _ilu
+                    _apc_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                             '1278sDTT_D1V_HCCD_APC_JOIN.py')
+                    _spec = _ilu.spec_from_file_location('_apc_join_mod', _apc_path)
+                    _apc_mod = _ilu.module_from_spec(_spec)
+                    _spec.loader.exec_module(_apc_mod)
+                    # Cold-start 60-day: no existing APC file, so skip the manifest and
+                    # use a 60-day lookback so all wafers in the source window are queried.
+                    # Normal incremental runs use the manifest as usual.
+                    _is_60day = apc_input.endswith('_60day.csv')
+                    _existing_apc = apc_input_path.replace('.csv', '_APC.csv')
+                    _60day_cold = _is_60day and not os.path.exists(_existing_apc)
+                    _use_manifest = None if _60day_cold else manifest_path
+                    _use_lookback = 60 if _60day_cold else config.get('apc_query_lookback_days')
+                    if _60day_cold:
+                        logger.info('60-day cold-start: running full-file APC join (no manifest, 60-day lookback)')
+                    out = _apc_mod.run_apc_join(apc_input_path,
+                                                wafer_manifest_path=_use_manifest,
+                                                apc_query_lookback_days=_use_lookback,
+                                                require_area_btool_for_match_ops=config.get('require_area_btool_for_match_ops'),
+                                                site=site)
+                    logger.info(f"APC join completed. Output: {out}")
+                except Exception as _e:
+                    logger.error(f"APC join failed for {apc_input} (non-fatal, base CSV is intact): {_e}", exc_info=True)
+            elif apc_input.endswith('_60day.csv'):
+                logger.info(f"60-day HCCD variant not yet created — skipping APC join for {apc_input}")
+            else:
+                logger.warning(f"APC join skipped — HCCD_{site} CSV not found: {apc_input_path}")
 
 def save_cd_level_data(processor, cd_data_new, csv_name, cd_level, site):
     """Save CD level data, handling existing CSV and removing unnecessary columns"""
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger(f"sDTT_{site}_ENGINE")
+    prune_targets = {('DCCD', 'D1V'), ('DCCD', 'F32'), ('FCCD', 'D1V'), ('FCCD', 'F32')}
+    retention_days = 90
     
     # Define columns to remove for each CD level
     columns_to_remove = {
@@ -1471,6 +1508,28 @@ def save_cd_level_data(processor, cd_data_new, csv_name, cd_level, site):
         cd_data_final.reset_index(drop=True, inplace=True)
         logger.info(f"Sorted {cd_level}_{site} final table by DATA_COLLECTION_TIME (descending)")
 
+        if (cd_level, site) in prune_targets:
+            cutoff = pd.Timestamp.now().normalize() - pd.Timedelta(days=retention_days)
+            rows_before_prune = len(cd_data_final)
+            valid_time_mask = cd_data_final['DATA_COLLECTION_TIME'].notna()
+            retained_rows_mask = valid_time_mask & (cd_data_final['DATA_COLLECTION_TIME'] >= cutoff)
+            dropped_null_dates = rows_before_prune - int(valid_time_mask.sum())
+            cd_data_final = cd_data_final.loc[retained_rows_mask].reset_index(drop=True)
+            rows_pruned = rows_before_prune - len(cd_data_final)
+            logger.info(
+                f"Pruned {rows_pruned} rows older than {retention_days} days from {cd_level}_{site} "
+                f"using DATA_COLLECTION_TIME cutoff {cutoff:%Y-%m-%d %H:%M:%S}"
+            )
+            if dropped_null_dates:
+                logger.warning(
+                    f"Dropped {dropped_null_dates} {cd_level}_{site} rows with unparsable DATA_COLLECTION_TIME"
+                )
+    elif (cd_level, site) in prune_targets:
+        logger.warning(
+            f"Skipping {retention_days}-day retention pruning for {cd_level}_{site}: "
+            "DATA_COLLECTION_TIME column is missing"
+        )
+
     # Save final data
     processor.main_df_to_csv(cd_data_final, csv_name, 1)
     
@@ -1479,6 +1538,19 @@ def save_cd_level_data(processor, cd_data_new, csv_name, cd_level, site):
     final_message = f"CSV created/updated for {cd_level}_{site}: {date_string} {csv_name}.csv ({len(cd_data_final)} records)"
     print(final_message)
     logger.info(final_message)
+
+    # ── Write 60-day pruned HCCD variant for JMP reporting ──────────────────
+    # For HCCD D1V and F32, also create a 60-day pruned version to improve
+    # JMP reporting performance. The full retention (200+ days) is preserved above.
+    if cd_level == 'HCCD' and site in ('D1V', 'F32') and 'DATA_COLLECTION_TIME' in cd_data_final.columns:
+        hccd_60day_cutoff = pd.Timestamp.now().normalize() - pd.Timedelta(days=60)
+        hccd_valid_time_mask = cd_data_final['DATA_COLLECTION_TIME'].notna()
+        hccd_retained_mask = hccd_valid_time_mask & (cd_data_final['DATA_COLLECTION_TIME'] >= hccd_60day_cutoff)
+        cd_data_60day = cd_data_final.loc[hccd_retained_mask].reset_index(drop=True)
+        hccd_60day_name = f"{csv_name}_60day"
+        processor.main_df_to_csv(cd_data_60day, hccd_60day_name, 1)
+        hccd_60day_msg = f"60-day HCCD variant created for {site}: {len(cd_data_60day)} records (cutoff: {hccd_60day_cutoff:%Y-%m-%d})"
+        logger.info(hccd_60day_msg)
 
 def _append_layer_to_temp_csv(df: pd.DataFrame, path: str) -> None:
     """Append *df* to a per-CD temp CSV, guaranteeing column alignment.

@@ -1,6 +1,6 @@
 # sDTT Knowledge Base
 
-Last updated: 2026-05-01
+Last updated: 2026-05-21
 
 ## Purpose
 This document captures current understanding of super DTT (sDTT) source CSVs and related outputs in this workspace, with emphasis on how files are produced, what they contain, and how downstream tooling consumes them.
@@ -35,9 +35,14 @@ What they represent:
 - Joined and normalized per-wafer sDTT datasets with WEC, SPC, ALLSTATS, and measurement/statistics context.
 - Produced by pipeline/data-processing scripts (not manually curated).
 
-### B) APC-enriched HCCD output (1278 D1V only)
-Primary file:
+### B) APC-enriched HCCD output (1278 D1V + F32)
+Primary files:
 - `1278sDTT_HCCD_D1V_APC.csv`
+- `1278sDTT_HCCD_F32_APC.csv`
+
+60-day variants:
+- `1278sDTT_HCCD_D1V_60day_APC.csv`
+- `1278sDTT_HCCD_F32_60day_APC.csv`
 
 What it adds:
 - APC columns such as `APC_B_TOOL`, `APC_SETTING_USED`, `APC_OPENRUNS`, `APC_FB_SUC`, `APC_AREA`, `APC_PRODGROUP`, plus additional APC attributes.
@@ -139,15 +144,25 @@ Important nuance (current code behavior):
 	- `New BTOOL`
 
 ## APC join specifics worth preserving
-- APC join is targeted at 1278 D1V HCCD flow.
+- APC-enriched HCCD outputs used by current JMP Dispo flows are targeted to 1278 D1V and F32.
 - Join logic includes dedup/priority handling for ambiguous APC records.
 - SUBENTITY matching logic is used to prefer APC records that match source wafer chamber context.
 - Special handling exists for UBE area rows where packed APC values must be split and chamber-indexed.
 
+## JMP Dispo source-selection behavior (May 2026 update)
+- Chamber and Layer Dispo JSL default to 1278 60-day APC source files.
+- `Include Full History` switches 1278 source selection to full APC files.
+- For 1278, this replaces prior in-JSL lookback row deletion for default mode.
+- 1280 behavior remains unchanged in this update.
+
 ## Pipeline operational notes
 - Orchestrators write final outputs to `integrated_output/` and intermediate artifacts to `integrated_output/query_files/`.
-- Configurable lookback (`days`) exists at pipeline level.
-- 1278 pipeline can run APC join; 1280 pipeline is configured without APC join.
+- Configurable lookback (`days`) exists at pipeline level; nightly production uses `days=5`.
+- APC join runs incrementally per manifest (`current_run_wafers_{site}.csv`): only 5-day wafers are re-queried; existing rows retained. `apc_query_lookback_days=10` acts as a safety net when the manifest is unavailable.
+- Both the full `_APC.csv` and `_60day_APC.csv` variants are updated on each nightly run.
+- 1278 pipeline runs APC join for both D1V and F32 HCCD (production-verified 2026-05-21).
+- 1280 pipeline is configured without APC join.
+- BM0H layer (incBM0=1) is included in the layer scope. BM0H APC is being rolled out using area `8AMEUBE_GAS` (via AEPC2); this is handled by the explicit fourth cascade tier added 2026-05-21. Operation 252845 confirmed pulling `8AMEUBE_GAS` records in production.
 
 ## Flagging engine defaults to remember
 - `sDTT_flagging_engine.py` default input is `integrated_output/1278sDTT_HCCD_D1V_APC.csv`.

@@ -182,7 +182,7 @@ def _load_module(name: str, path: Path):
 
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
-def parse_args() -> argparse.Namespace:
+def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description='1280 sDTT Pipeline Orchestrator — D1V, M6–M16, no APC',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -202,7 +202,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         '--resume', action='store_true',
         help='Resume from last checkpoint; skip already-completed layers')
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 # ── Build effective config ────────────────────────────────────────────────────
@@ -246,8 +246,8 @@ def build_config(args: argparse.Namespace, base_config: dict) -> dict:
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
-def main() -> None:
-    args          = parse_args()
+def main(argv=None) -> None:
+    args          = parse_args(argv)
     progress_only = PIPELINE_CONFIG.get('progress_only', True)
     logger        = setup_pipeline_logging(args.log_level, progress_only=progress_only)
 

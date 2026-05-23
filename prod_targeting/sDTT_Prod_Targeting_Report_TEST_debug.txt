@@ -1,126 +1,110 @@
-3861026508 | START PROD TARGETING
-3861026508 | PILOTS={"8PR8CVAB_281154_POR", "8PONCVBB_251292_POR", "8PR8CVB_281154_POR", "8PR8CVB_281155_POR", "8PF4CVH_278033_POR", "8PXMCVBG_251292_POR", "8PR8CVB_281156_POR", "8PONCVBB_251293_POR"}
-3861026508 | LAYERS={}
-3861026508 | Close option enabled: closing windows except dialog
-3861026508 | Closing window from Get Window List
-3861026508 | Closing window from Get Window List
-3861026508 | Closing all data tables
-3861026517 | Opened main source rows=39875
-3861026521 | Concatenated F32 rows=24405 | combined=64280
-3861026521 | After pilot filter rows=2825
-3861026521 | After SPC mode filter rows=2679
-3861026521 | Applying target regime filter. Groups=8
-3861026521 | REGIME 8PF4CVH_278033_POR|600_M08 | last target=38.333 | kept rows=17 | dropped rows=0
-3861026521 | REGIME 8PONCVBB_251292_POR|610_M09 | last target=39.15 | kept rows=459 | dropped rows=98
-3861026521 | REGIME 8PONCVBB_251293_POR|620_M10 | last target=37.9966 | kept rows=204 | dropped rows=353
-3861026521 | REGIME 8PR8CVAB_281154_POR|600_M08 | last target=37.88 | kept rows=29 | dropped rows=0
-3861026521 | REGIME 8PR8CVB_281154_POR|600_M08 | last target=37.88 | kept rows=49 | dropped rows=0
-3861026521 | REGIME 8PR8CVB_281155_POR|610_M09 | last target=37.88 | kept rows=47 | dropped rows=0
-3861026521 | REGIME 8PR8CVB_281156_POR|620_M10 | last target=37.87 | kept rows=59 | dropped rows=0
-3861026521 | REGIME 8PXMCVBG_251292_POR|610_M09 | last target=39.31 | kept rows=1364 | dropped rows=0
-3861026521 | Target regime filter complete. Before=2679 | After=2228
-3861026522 | Built column SITE_PROD_MOP_PILOT rows=2228
-3861026522 | Built SITE_PROD_MOP_PILOT on main table rows=2228
-3861026522 | Building limit config. Distinct layers=3
-3861026522 | LIMITS 600_M08 | UCL=0.986 | CL=0 | LCL=-0.986
-3861026522 | LIMITS 610_M09 | UCL=0.93 | CL=0 | LCL=-0.93
-3861026522 | LIMITS 620_M10 | UCL=0.901 | CL=0 | LCL=-0.901
-3861026522 | Discovered layers={"600_M08", "610_M09", "620_M10"}
-3861026522 | BUILD WINDOW | sDTT PROD TARGETING - INTERLEAVED - 8PR8CVAB_281154_POR, 8PONCVBB_251292_POR, 8PR8CVB_281154_POR, 8PR8CVB_281155_POR, 8PF4CVH_278033_POR, 8PXMCVBG_251292_PO... | layers=3
-3861026522 | LAYER SECTION | 600_M08 | rows=95
-3861026522 | VAR TITLE | Variability Gauge WEC_LAYER=600_M08 | parsed layer=600_M08
-3861026522 | VAR TEXTBOX COUNT | layer=600_M08 | count=6
-3861026522 | VAR LABEL CLEARED | layer=600_M08 | idx=1 | text=ALLSTATS_CURRENT_RETICLE
-3861026522 | VAR LABEL CLEARED | layer=600_M08 | idx=2 | text=SPC_SITE
-3861026522 | VAR LABEL CLEARED | layer=600_M08 | idx=3 | text=PROD_MOP_PILOT
-3861026522 | VAR LABEL CLEARED | layer=600_M08 | idx=4 | text=ALLSTATS_CURRENT_RETICLE
-3861026522 | VAR LABEL CLEARED | layer=600_M08 | idx=5 | text=SPC_SITE
-3861026522 | VAR LABEL CLEARED | layer=600_M08 | idx=6 | text=PROD_MOP_PILOT
-3861026522 | VAR WIDTH | layer=600_M08 | groups_reticle=3 | groups_closest=4 | groups_axis=4 | uniform_mode=0 | groups_used=3 | width=120
-3861026522 | VAR HEIGHT | layer=600_M08 | frame_height=420 | axisbox2_height=320
-3861026522 | REFLINES APPLIED | layer=600_M08
-3861026522 | TREND_PROD TITLE | Bivariate Fit of ALLSTATS_MEAN_DTT_VALUE By DATA_COLLECTION_TIME WEC_LAYER=600_M08 | parsed layer=600_M08
-3861026522 | TREND_PROD HEIGHT | layer=600_M08 | frame_height=396 | bottom_padding=24
-3861026522 | REFLINES APPLIED | layer=600_M08
-3861026522 | TREND_SITE TITLE | Bivariate Fit of ALLSTATS_MEAN_DTT_VALUE By DATA_COLLECTION_TIME WEC_LAYER=600_M08 | parsed layer=600_M08
-3861026522 | TREND_SITE HEIGHT | layer=600_M08 | frame_height=396 | bottom_padding=24
-3861026522 | REFLINES APPLIED | layer=600_M08
-3861026522 | VAR TITLE | Variability Gauge WEC_LAYER=600_M08 | parsed layer=600_M08
-3861026522 | VAR TEXTBOX COUNT | layer=600_M08 | count=6
-3861026522 | VAR LABEL CLEARED | layer=600_M08 | idx=1 | text=ALLSTATS_CURRENT_RETICLE
-3861026522 | VAR LABEL CLEARED | layer=600_M08 | idx=2 | text=SPC_SITE
-3861026522 | VAR LABEL CLEARED | layer=600_M08 | idx=3 | text=PROD_MOP_PILOT
-3861026522 | VAR LABEL CLEARED | layer=600_M08 | idx=4 | text=ALLSTATS_CURRENT_RETICLE
-3861026522 | VAR LABEL CLEARED | layer=600_M08 | idx=5 | text=SPC_SITE
-3861026522 | VAR LABEL CLEARED | layer=600_M08 | idx=6 | text=PROD_MOP_PILOT
-3861026522 | VAR WIDTH | layer=600_M08 | groups_reticle=3 | groups_closest=4 | groups_axis=4 | uniform_mode=0 | groups_used=3 | width=120
-3861026522 | VAR HEIGHT | layer=600_M08 | frame_height=420 | axisbox2_height=320
-3861026522 | TREND_PROD TITLE | Bivariate Fit of ALLSTATS_WAFER_MEAN_VALUE By DATA_COLLECTION_TIME WEC_LAYER=600_M08 | parsed layer=600_M08
-3861026522 | TREND_PROD HEIGHT | layer=600_M08 | frame_height=396 | bottom_padding=24
-3861026522 | TREND_SITE TITLE | Bivariate Fit of ALLSTATS_WAFER_MEAN_VALUE By DATA_COLLECTION_TIME WEC_LAYER=600_M08 | parsed layer=600_M08
-3861026522 | TREND_SITE HEIGHT | layer=600_M08 | frame_height=396 | bottom_padding=24
-3861026522 | LAYER SECTION | 610_M09 | rows=1870
-3861026522 | VAR TITLE | Variability Gauge WEC_LAYER=610_M09 | parsed layer=610_M09
-3861026522 | VAR TEXTBOX COUNT | layer=610_M09 | count=6
-3861026522 | VAR LABEL CLEARED | layer=610_M09 | idx=1 | text=ALLSTATS_CURRENT_RETICLE
-3861026522 | VAR LABEL CLEARED | layer=610_M09 | idx=2 | text=SPC_SITE
-3861026522 | VAR LABEL CLEARED | layer=610_M09 | idx=3 | text=PROD_MOP_PILOT
-3861026522 | VAR LABEL CLEARED | layer=610_M09 | idx=4 | text=ALLSTATS_CURRENT_RETICLE
-3861026522 | VAR LABEL CLEARED | layer=610_M09 | idx=5 | text=SPC_SITE
-3861026522 | VAR LABEL CLEARED | layer=610_M09 | idx=6 | text=PROD_MOP_PILOT
-3861026522 | VAR WIDTH | layer=610_M09 | groups_reticle=10 | groups_closest=10 | groups_axis=10 | uniform_mode=0 | groups_used=10 | width=400
-3861026522 | VAR HEIGHT | layer=610_M09 | frame_height=420 | axisbox2_height=320
-3861026522 | REFLINES APPLIED | layer=610_M09
-3861026522 | TREND_PROD TITLE | Bivariate Fit of ALLSTATS_MEAN_DTT_VALUE By DATA_COLLECTION_TIME WEC_LAYER=610_M09 | parsed layer=610_M09
-3861026522 | TREND_PROD HEIGHT | layer=610_M09 | frame_height=396 | bottom_padding=24
-3861026522 | REFLINES APPLIED | layer=610_M09
-3861026522 | TREND_SITE TITLE | Bivariate Fit of ALLSTATS_MEAN_DTT_VALUE By DATA_COLLECTION_TIME WEC_LAYER=610_M09 | parsed layer=610_M09
-3861026522 | TREND_SITE HEIGHT | layer=610_M09 | frame_height=396 | bottom_padding=24
-3861026522 | REFLINES APPLIED | layer=610_M09
-3861026522 | VAR TITLE | Variability Gauge WEC_LAYER=610_M09 | parsed layer=610_M09
-3861026522 | VAR TEXTBOX COUNT | layer=610_M09 | count=6
-3861026522 | VAR LABEL CLEARED | layer=610_M09 | idx=1 | text=ALLSTATS_CURRENT_RETICLE
-3861026522 | VAR LABEL CLEARED | layer=610_M09 | idx=2 | text=SPC_SITE
-3861026522 | VAR LABEL CLEARED | layer=610_M09 | idx=3 | text=PROD_MOP_PILOT
-3861026522 | VAR LABEL CLEARED | layer=610_M09 | idx=4 | text=ALLSTATS_CURRENT_RETICLE
-3861026522 | VAR LABEL CLEARED | layer=610_M09 | idx=5 | text=SPC_SITE
-3861026522 | VAR LABEL CLEARED | layer=610_M09 | idx=6 | text=PROD_MOP_PILOT
-3861026522 | VAR WIDTH | layer=610_M09 | groups_reticle=10 | groups_closest=10 | groups_axis=10 | uniform_mode=0 | groups_used=10 | width=400
-3861026522 | VAR HEIGHT | layer=610_M09 | frame_height=420 | axisbox2_height=320
-3861026522 | TREND_PROD TITLE | Bivariate Fit of ALLSTATS_WAFER_MEAN_VALUE By DATA_COLLECTION_TIME WEC_LAYER=610_M09 | parsed layer=610_M09
-3861026522 | TREND_PROD HEIGHT | layer=610_M09 | frame_height=396 | bottom_padding=24
-3861026522 | TREND_SITE TITLE | Bivariate Fit of ALLSTATS_WAFER_MEAN_VALUE By DATA_COLLECTION_TIME WEC_LAYER=610_M09 | parsed layer=610_M09
-3861026522 | TREND_SITE HEIGHT | layer=610_M09 | frame_height=396 | bottom_padding=24
-3861026522 | LAYER SECTION | 620_M10 | rows=263
-3861026522 | VAR TITLE | Variability Gauge WEC_LAYER=620_M10 | parsed layer=620_M10
-3861026522 | VAR TEXTBOX COUNT | layer=620_M10 | count=6
-3861026522 | VAR LABEL CLEARED | layer=620_M10 | idx=1 | text=ALLSTATS_CURRENT_RETICLE
-3861026522 | VAR LABEL CLEARED | layer=620_M10 | idx=2 | text=SPC_SITE
-3861026522 | VAR LABEL CLEARED | layer=620_M10 | idx=3 | text=PROD_MOP_PILOT
-3861026522 | VAR LABEL CLEARED | layer=620_M10 | idx=4 | text=ALLSTATS_CURRENT_RETICLE
-3861026522 | VAR LABEL CLEARED | layer=620_M10 | idx=5 | text=SPC_SITE
-3861026522 | VAR LABEL CLEARED | layer=620_M10 | idx=6 | text=PROD_MOP_PILOT
-3861026522 | VAR WIDTH | layer=620_M10 | groups_reticle=4 | groups_closest=4 | groups_axis=4 | uniform_mode=0 | groups_used=4 | width=160
-3861026522 | VAR HEIGHT | layer=620_M10 | frame_height=420 | axisbox2_height=320
-3861026522 | REFLINES APPLIED | layer=620_M10
-3861026522 | TREND_PROD TITLE | Bivariate Fit of ALLSTATS_MEAN_DTT_VALUE By DATA_COLLECTION_TIME WEC_LAYER=620_M10 | parsed layer=620_M10
-3861026522 | TREND_PROD HEIGHT | layer=620_M10 | frame_height=396 | bottom_padding=24
-3861026522 | REFLINES APPLIED | layer=620_M10
-3861026522 | TREND_SITE TITLE | Bivariate Fit of ALLSTATS_MEAN_DTT_VALUE By DATA_COLLECTION_TIME WEC_LAYER=620_M10 | parsed layer=620_M10
-3861026522 | TREND_SITE HEIGHT | layer=620_M10 | frame_height=396 | bottom_padding=24
-3861026522 | REFLINES APPLIED | layer=620_M10
-3861026522 | VAR TITLE | Variability Gauge WEC_LAYER=620_M10 | parsed layer=620_M10
-3861026522 | VAR TEXTBOX COUNT | layer=620_M10 | count=6
-3861026522 | VAR LABEL CLEARED | layer=620_M10 | idx=1 | text=ALLSTATS_CURRENT_RETICLE
-3861026522 | VAR LABEL CLEARED | layer=620_M10 | idx=2 | text=SPC_SITE
-3861026522 | VAR LABEL CLEARED | layer=620_M10 | idx=3 | text=PROD_MOP_PILOT
-3861026522 | VAR LABEL CLEARED | layer=620_M10 | idx=4 | text=ALLSTATS_CURRENT_RETICLE
-3861026522 | VAR LABEL CLEARED | layer=620_M10 | idx=5 | text=SPC_SITE
-3861026522 | VAR LABEL CLEARED | layer=620_M10 | idx=6 | text=PROD_MOP_PILOT
-3861026522 | VAR WIDTH | layer=620_M10 | groups_reticle=4 | groups_closest=4 | groups_axis=4 | uniform_mode=0 | groups_used=4 | width=160
-3861026522 | VAR HEIGHT | layer=620_M10 | frame_height=420 | axisbox2_height=320
-3861026522 | TREND_PROD TITLE | Bivariate Fit of ALLSTATS_WAFER_MEAN_VALUE By DATA_COLLECTION_TIME WEC_LAYER=620_M10 | parsed layer=620_M10
-3861026522 | TREND_PROD HEIGHT | layer=620_M10 | frame_height=396 | bottom_padding=24
-3861026522 | TREND_SITE TITLE | Bivariate Fit of ALLSTATS_WAFER_MEAN_VALUE By DATA_COLLECTION_TIME WEC_LAYER=620_M10 | parsed layer=620_M10
-3861026522 | TREND_SITE HEIGHT | layer=620_M10 | frame_height=396 | bottom_padding=24
-3861026523 | COMPLETE. Main rows=2228 | Layers=3
+3861635351 | START PROD TARGETING
+3861635351 | PILOTS={"8PR8CVAB_281154_POR", "8PR8CVB_281154_POR", "8PR9CVB_281154_POR", "1L78EVAA_281155_POR", "1L78EVE_281155_POR", "8PONCVBB_281155_POR", "8PR8CVAB_281155_POR", "8PR8CVB_281155_POR", "8PR9CVB_281155_POR", "8PXMCVBG_281155_OPC4_2", "8PXMCVBG_281155_POR", "1L78EVE_281156_POR", "8PR8CVAB_281156_POR", "8PR8CVB_281156_POR"}
+3861635351 | LAYERS={}
+3861635389 | Opened main source rows=41335
+3861635404 | Concatenated F32 rows=25726 | combined=67061
+3861635406 | After pilot filter rows=545
+3861635406 | After SPC mode filter rows=465
+3861635406 | Applying target regime filter. Groups=14
+3861635406 | REGIME 1L78EVAA_281155_POR|610_M09 | last target=37.42 | kept rows=7 | dropped rows=0
+3861635406 | REGIME 1L78EVE_281155_POR|610_M09 | last target=37.88 | kept rows=10 | dropped rows=0
+3861635406 | REGIME 1L78EVE_281156_POR|620_M10 | last target=38.28 | kept rows=13 | dropped rows=0
+3861635406 | REGIME 8PONCVBB_281155_POR|610_M09 | last target=37.8 | kept rows=41 | dropped rows=0
+3861635406 | REGIME 8PR8CVAB_281154_POR|600_M08 | last target=37.88 | kept rows=42 | dropped rows=0
+3861635406 | REGIME 8PR8CVAB_281155_POR|610_M09 | last target=37.88 | kept rows=37 | dropped rows=0
+3861635406 | REGIME 8PR8CVAB_281156_POR|620_M10 | last target=37.87 | kept rows=36 | dropped rows=0
+3861635406 | REGIME 8PR8CVB_281154_POR|600_M08 | last target=37.88 | kept rows=49 | dropped rows=0
+3861635406 | REGIME 8PR8CVB_281155_POR|610_M09 | last target=37.88 | kept rows=47 | dropped rows=0
+3861635406 | REGIME 8PR8CVB_281156_POR|620_M10 | last target=37.87 | kept rows=59 | dropped rows=0
+3861635406 | REGIME 8PR9CVB_281154_POR|600_M08 | last target=38.18 | kept rows=30 | dropped rows=10
+3861635406 | REGIME 8PR9CVB_281155_POR|610_M09 | last target=38.63 | kept rows=30 | dropped rows=10
+3861635406 | REGIME 8PXMCVBG_281155_OPC4_2|610_M09 | last target=38.59 | kept rows=27 | dropped rows=0
+3861635406 | REGIME 8PXMCVBG_281155_POR|610_M09 | last target=37.96 | kept rows=17 | dropped rows=0
+3861635406 | Target regime filter complete. Before=465 | After=445
+3861635406 | After lookback rows=407
+3861635406 | Built column SITE_PROD_MOP_PILOT rows=407
+3861635406 | Built SITE_PROD_MOP_PILOT on main table rows=407
+3861635406 | Building limit config. Distinct layers=3
+3861635406 | LIMITS 600_M08 | UCL=0.986 | CL=0 | LCL=-0.986
+3861635406 | LIMITS 610_M09 | UCL=0.93 | CL=0 | LCL=-0.93
+3861635406 | LIMITS 620_M10 | UCL=0.901 | CL=0 | LCL=-0.901
+3861635406 | Discovered layers={"600_M08", "610_M09", "620_M10"}
+3861635406 | AMCT export saved | path=\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\prod_targeting\amct_target_lines_05142026_83006_PM.csv | rows=14
+3861635406 | AMCT target CSV ready | \\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\prod_targeting\amct_target_lines_05142026_83006_PM.csv
+3861635406 | BUILD WINDOW | sDTT PROD TARGETING - INTERLEAVED - 8PR8CVAB_281154_POR, 8PR8CVB_281154_POR, 8PR9CVB_281154_POR, 1L78EVAA_281155_POR, 1L78EVE_281155_POR, 8PONCVBB_281155_PO... | layers=3
+3861635406 | LAYER SECTION | 600_M08 | rows=117
+3861635406 | VAR TITLE | Variability Gauge WEC_LAYER=600_M08 | parsed layer=600_M08
+3861635406 | VAR TEXTBOX COUNT | layer=600_M08 | count=4
+3861635406 | VAR LABEL CLEARED | layer=600_M08 | idx=1 | text=SPC_SITE
+3861635406 | VAR LABEL CLEARED | layer=600_M08 | idx=2 | text=PROD_MOP_PILOT
+3861635406 | VAR LABEL CLEARED | layer=600_M08 | idx=3 | text=SPC_SITE
+3861635406 | VAR LABEL CLEARED | layer=600_M08 | idx=4 | text=PROD_MOP_PILOT
+3861635406 | VAR WIDTH | layer=600_M08 | groups_closest=0 | groups_axis=3 | uniform_mode=0 | groups_used=3 | width=120
+3861635406 | VAR HEIGHT | layer=600_M08 | frame_height=300 | axisbox2_height=70
+3861635406 | REFLINES APPLIED | layer=600_M08
+3861635406 | MEAN_DTT YLIM | layer=600_M08 | data_min=-0.7375 | data_max=1.1275 | lcl=-0.986 | ucl=0.986 | y_min=-0.986 | y_max=1.1275
+3861635406 | TREND_PROD TITLE | Bivariate Fit of ALLSTATS_MEAN_DTT_VALUE By DATA_COLLECTION_TIME WEC_LAYER=600_M08 | parsed layer=600_M08
+3861635406 | TREND_PROD HEIGHT | layer=600_M08 | frame_height=396 | bottom_padding=24
+3861635406 | REFLINES APPLIED | layer=600_M08
+3861635406 | MEAN_DTT YLIM | layer=600_M08 | data_min=-0.7375 | data_max=1.1275 | lcl=-0.986 | ucl=0.986 | y_min=-0.986 | y_max=1.1275
+3861635406 | VAR TITLE | Variability Gauge WEC_LAYER=600_M08 | parsed layer=600_M08
+3861635406 | VAR TEXTBOX COUNT | layer=600_M08 | count=4
+3861635406 | VAR LABEL CLEARED | layer=600_M08 | idx=1 | text=SPC_SITE
+3861635406 | VAR LABEL CLEARED | layer=600_M08 | idx=2 | text=PROD_MOP_PILOT
+3861635406 | VAR LABEL CLEARED | layer=600_M08 | idx=3 | text=SPC_SITE
+3861635406 | VAR LABEL CLEARED | layer=600_M08 | idx=4 | text=PROD_MOP_PILOT
+3861635406 | VAR WIDTH | layer=600_M08 | groups_closest=0 | groups_axis=3 | uniform_mode=0 | groups_used=3 | width=120
+3861635406 | VAR HEIGHT | layer=600_M08 | frame_height=300 | axisbox2_height=70
+3861635406 | TREND_PROD TITLE | Bivariate Fit of ALLSTATS_WAFER_MEAN_VALUE By DATA_COLLECTION_TIME WEC_LAYER=600_M08 | parsed layer=600_M08
+3861635406 | TREND_PROD HEIGHT | layer=600_M08 | frame_height=396 | bottom_padding=24
+3861635407 | LAYER SECTION | 610_M09 | rows=186
+3861635407 | VAR TITLE | Variability Gauge WEC_LAYER=610_M09 | parsed layer=610_M09
+3861635407 | VAR TEXTBOX COUNT | layer=610_M09 | count=4
+3861635407 | VAR LABEL CLEARED | layer=610_M09 | idx=1 | text=SPC_SITE
+3861635407 | VAR LABEL CLEARED | layer=610_M09 | idx=2 | text=PROD_MOP_PILOT
+3861635407 | VAR LABEL CLEARED | layer=610_M09 | idx=3 | text=SPC_SITE
+3861635407 | VAR LABEL CLEARED | layer=610_M09 | idx=4 | text=PROD_MOP_PILOT
+3861635407 | VAR WIDTH | layer=610_M09 | groups_closest=0 | groups_axis=8 | uniform_mode=0 | groups_used=8 | width=320
+3861635407 | VAR HEIGHT | layer=610_M09 | frame_height=300 | axisbox2_height=70
+3861635407 | REFLINES APPLIED | layer=610_M09
+3861635407 | MEAN_DTT YLIM | layer=610_M09 | data_min=-0.9213 | data_max=1.5938 | lcl=-0.93 | ucl=0.93 | y_min=-0.93 | y_max=1.5938
+3861635407 | TREND_PROD TITLE | Bivariate Fit of ALLSTATS_MEAN_DTT_VALUE By DATA_COLLECTION_TIME WEC_LAYER=610_M09 | parsed layer=610_M09
+3861635407 | TREND_PROD HEIGHT | layer=610_M09 | frame_height=396 | bottom_padding=24
+3861635407 | REFLINES APPLIED | layer=610_M09
+3861635407 | MEAN_DTT YLIM | layer=610_M09 | data_min=-0.9213 | data_max=1.5938 | lcl=-0.93 | ucl=0.93 | y_min=-0.93 | y_max=1.5938
+3861635407 | VAR TITLE | Variability Gauge WEC_LAYER=610_M09 | parsed layer=610_M09
+3861635407 | VAR TEXTBOX COUNT | layer=610_M09 | count=4
+3861635407 | VAR LABEL CLEARED | layer=610_M09 | idx=1 | text=SPC_SITE
+3861635407 | VAR LABEL CLEARED | layer=610_M09 | idx=2 | text=PROD_MOP_PILOT
+3861635407 | VAR LABEL CLEARED | layer=610_M09 | idx=3 | text=SPC_SITE
+3861635407 | VAR LABEL CLEARED | layer=610_M09 | idx=4 | text=PROD_MOP_PILOT
+3861635407 | VAR WIDTH | layer=610_M09 | groups_closest=0 | groups_axis=8 | uniform_mode=0 | groups_used=8 | width=320
+3861635407 | VAR HEIGHT | layer=610_M09 | frame_height=300 | axisbox2_height=70
+3861635407 | TREND_PROD TITLE | Bivariate Fit of ALLSTATS_WAFER_MEAN_VALUE By DATA_COLLECTION_TIME WEC_LAYER=610_M09 | parsed layer=610_M09
+3861635407 | TREND_PROD HEIGHT | layer=610_M09 | frame_height=396 | bottom_padding=24
+3861635407 | LAYER SECTION | 620_M10 | rows=104
+3861635407 | VAR TITLE | Variability Gauge WEC_LAYER=620_M10 | parsed layer=620_M10
+3861635407 | VAR TEXTBOX COUNT | layer=620_M10 | count=4
+3861635407 | VAR LABEL CLEARED | layer=620_M10 | idx=1 | text=SPC_SITE
+3861635407 | VAR LABEL CLEARED | layer=620_M10 | idx=2 | text=PROD_MOP_PILOT
+3861635407 | VAR LABEL CLEARED | layer=620_M10 | idx=3 | text=SPC_SITE
+3861635407 | VAR LABEL CLEARED | layer=620_M10 | idx=4 | text=PROD_MOP_PILOT
+3861635407 | VAR WIDTH | layer=620_M10 | groups_closest=0 | groups_axis=3 | uniform_mode=0 | groups_used=3 | width=120
+3861635407 | VAR HEIGHT | layer=620_M10 | frame_height=300 | axisbox2_height=70
+3861635407 | REFLINES APPLIED | layer=620_M10
+3861635407 | MEAN_DTT YLIM | layer=620_M10 | data_min=-0.3475 | data_max=1.1763 | lcl=-0.901 | ucl=0.901 | y_min=-0.901 | y_max=1.1763
+3861635407 | TREND_PROD TITLE | Bivariate Fit of ALLSTATS_MEAN_DTT_VALUE By DATA_COLLECTION_TIME WEC_LAYER=620_M10 | parsed layer=620_M10
+3861635407 | TREND_PROD HEIGHT | layer=620_M10 | frame_height=396 | bottom_padding=24
+3861635407 | REFLINES APPLIED | layer=620_M10
+3861635407 | MEAN_DTT YLIM | layer=620_M10 | data_min=-0.3475 | data_max=1.1763 | lcl=-0.901 | ucl=0.901 | y_min=-0.901 | y_max=1.1763
+3861635407 | VAR TITLE | Variability Gauge WEC_LAYER=620_M10 | parsed layer=620_M10
+3861635407 | VAR TEXTBOX COUNT | layer=620_M10 | count=4
+3861635407 | VAR LABEL CLEARED | layer=620_M10 | idx=1 | text=SPC_SITE
+3861635407 | VAR LABEL CLEARED | layer=620_M10 | idx=2 | text=PROD_MOP_PILOT
+3861635407 | VAR LABEL CLEARED | layer=620_M10 | idx=3 | text=SPC_SITE
+3861635407 | VAR LABEL CLEARED | layer=620_M10 | idx=4 | text=PROD_MOP_PILOT
+3861635407 | VAR WIDTH | layer=620_M10 | groups_closest=0 | groups_axis=3 | uniform_mode=0 | groups_used=3 | width=120
+3861635407 | VAR HEIGHT | layer=620_M10 | frame_height=300 | axisbox2_height=70
+3861635407 | TREND_PROD TITLE | Bivariate Fit of ALLSTATS_WAFER_MEAN_VALUE By DATA_COLLECTION_TIME WEC_LAYER=620_M10 | parsed layer=620_M10
+3861635407 | TREND_PROD HEIGHT | layer=620_M10 | frame_height=396 | bottom_padding=24
+3861635408 | COMPLETE. Main rows=407 | Layers=3

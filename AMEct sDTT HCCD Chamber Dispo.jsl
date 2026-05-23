@@ -4,13 +4,19 @@ Names Default To Here( 1 );
 // ============================================================
 // GLOBAL CONFIGURATION AND PATHS
 // ============================================================
-path_1278="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_HCCD_D1V_APC.csv";
+path_1278_d1v_60day_apc="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_HCCD_D1V_60day_APC.csv";
+path_1278_d1v_apc="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_HCCD_D1V_APC.csv";
+path_1278_f32_60day_apc="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_HCCD_F32_60day_APC.csv";
+path_1278_f32_apc="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_HCCD_F32_APC.csv";
 path_1280="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1280sDTT_HCCD_D1V.csv";
 copy_pic_debug = 1;
-copy_button_list_runtime = .;
-copy_layer_boxes_runtime = Associative Array();
-copy_layer_label_boxes_runtime = Associative Array();
-copy_layer_extra_padding = 345;
+copy_button_list_mean_runtime = .;
+copy_layer_boxes_mean_runtime = Associative Array();
+copy_layer_label_boxes_mean_runtime = Associative Array();
+copy_button_list_sigma_runtime = .;
+copy_layer_boxes_sigma_runtime = Associative Array();
+copy_layer_label_boxes_sigma_runtime = Associative Array();
+copy_layer_extra_padding = 346;
 
 
 				                rowFBheight=370;
@@ -31,45 +37,154 @@ chamber_data = {
     {"Minog",   {"AME427_PM1","AME427_PM2","AME427_PM3","AME427_PM4","AME427_PM5","AME427_PM6"}}
 };
 
-Append_Copy_Button = Function({config, layer_name, button_label, copy_target, debug_tag},
-    copy_button_list = config["copy_button_list"];
-    If( !Is Scriptable( copy_button_list ),
-        copy_button_list = copy_button_list_runtime;
+Build_Subentity_Fleet_List = Function( {},
+    raw_list = {};
+    For( owner_i = 1, owner_i <= N Items( chamber_data ), owner_i++,
+        owner_chambers = chamber_data[owner_i][2];
+        For( chamber_i = 1, chamber_i <= N Items( owner_chambers ), chamber_i++,
+            Insert Into( raw_list, Char( owner_chambers[chamber_i] ) );
+        );
+    );
+    out_list = Associative Array( raw_list ) << Get Keys;
+    Sort List( out_list );
+);
+
+Filter_Subentity_Fleet_List = Function( {fleet_list, raw_filter},
+    needle = Uppercase( Trim( Char( raw_filter ) ) );
+    If( needle == "",
+        Return( fleet_list );
+    );
+
+    filtered = {};
+    For( i = 1, i <= N Items( fleet_list ), i++,
+        item = Char( fleet_list[i] );
+        If( Contains( Uppercase( item ), needle ),
+            Insert Into( filtered, item );
+        );
+    );
+    filtered;
+);
+
+Normalize_Subentity_Selection = Function( {raw_selection, visible_items},
+    out = {};
+
+    If( Is List( raw_selection ),
+        For( i = 1, i <= N Items( raw_selection ), i++,
+            item = Char( raw_selection[i] );
+            If( Contains( visible_items, item ),
+                Insert Into( out, item );
+            );
+        );
+    ,
+        If( Type( raw_selection ) == "Matrix",
+            n_sel = N Row( raw_selection );
+            For( i = 1, i <= n_sel, i++,
+                idx = Num( raw_selection[i] );
+                If( 1 <= idx <= N Items( visible_items ),
+                    Insert Into( out, Char( visible_items[idx] ) );
+                );
+            );
+        ,
+            If( Type( raw_selection ) == "String" & raw_selection != "",
+                Insert Into( out, raw_selection );
+            );
+        );
+    );
+
+    If( N Items( out ) > 0,
+        out = Associative Array( out ) << Get Keys;
+        Sort List( out );
+    );
+    out;
+);
+
+subentity_fleet_d1v = Build_Subentity_Fleet_List();
+subentity_fleet_f32 = {
+    "AME801_PM1","AME801_PM2","AME801_PM3","AME801_PM4","AME801_PM5","AME801_PM6",
+    "AME802_PM1","AME802_PM2","AME802_PM3","AME802_PM4","AME802_PM5","AME802_PM6",
+    "AME808_PM1","AME808_PM2","AME808_PM3","AME808_PM4","AME808_PM5","AME808_PM6",
+    "AME809_PM1","AME809_PM2","AME809_PM3","AME809_PM4","AME809_PM5","AME809_PM6"
+};
+subentity_picker_visible_d1v = subentity_fleet_d1v;
+subentity_picker_visible_f32 = subentity_fleet_f32;
+subentity_picker_selected = {};
+debug_generate_report = 1;
+
+Debug_Trace = Function( {msg},
+    If( debug_generate_report == 1,
+        Show( "CHAMBER_DISPO_DEBUG", Char( Today() ), msg );
+    );
+);
+
+Append_Copy_Button = Function({config, layer_name, button_label, copy_target, debug_tag, panel_key = "MEAN"},
+    use_sigma_panel = Uppercase( Char( panel_key ) ) == "SIGMA";
+
+    If( use_sigma_panel,
+        copy_button_list = config["copy_button_list_sigma"];
+        If( !Is Scriptable( copy_button_list ),
+            copy_button_list = copy_button_list_sigma_runtime;
+        );
+        copy_layer_boxes = copy_layer_boxes_sigma_runtime;
+        copy_layer_label_boxes = copy_layer_label_boxes_sigma_runtime;
+        layer_padding = copy_layer_extra_padding + 24;
+    ,
+        copy_button_list = config["copy_button_list_mean"];
+        If( !Is Scriptable( copy_button_list ),
+            copy_button_list = copy_button_list_mean_runtime;
+        );
+        copy_layer_boxes = copy_layer_boxes_mean_runtime;
+        copy_layer_label_boxes = copy_layer_label_boxes_mean_runtime;
+        layer_padding = copy_layer_extra_padding;
     );
 
     If( !Is Scriptable( copy_button_list ),
         Return();
     );
 
-    If( !Is Scriptable( copy_layer_boxes_runtime ),
-        copy_layer_boxes_runtime = Associative Array();
+    If( !Is Scriptable( copy_layer_boxes ),
+        copy_layer_boxes = Associative Array();
     );
-    If( !Is Scriptable( copy_layer_label_boxes_runtime ),
-        copy_layer_label_boxes_runtime = Associative Array();
+    If( !Is Scriptable( copy_layer_label_boxes ),
+        copy_layer_label_boxes = Associative Array();
+    );
+
+    If( use_sigma_panel,
+        copy_layer_boxes_sigma_runtime = copy_layer_boxes;
+        copy_layer_label_boxes_sigma_runtime = copy_layer_label_boxes;
+    ,
+        copy_layer_boxes_mean_runtime = copy_layer_boxes;
+        copy_layer_label_boxes_mean_runtime = copy_layer_label_boxes;
     );
 
     layer_key = Uppercase( Trim( Char( layer_name ) ) );
-    layer_keys = copy_layer_boxes_runtime << Get Keys;
+    layer_keys = copy_layer_boxes << Get Keys;
 
     If( !Contains( layer_keys, layer_key ),
         layer_button_box = V List Box();
         layer_container_box = V List Box(
             layer_button_box,
-            Spacer Box( Size( 1, copy_layer_extra_padding ) )
+            Spacer Box( Size( 1, layer_padding ) )
         );
         copy_button_list << Append(
             Outline Box( layer_key, layer_container_box )
         );
-        copy_layer_boxes_runtime[layer_key] = layer_button_box;
+        copy_layer_boxes[layer_key] = layer_button_box;
     );
 
-    layer_button_box = copy_layer_boxes_runtime[layer_key];
-    If( !Contains( copy_layer_label_boxes_runtime << Get Keys, layer_key ),
-        copy_layer_label_boxes_runtime[layer_key] = Associative Array();
+    layer_button_box = copy_layer_boxes[layer_key];
+    If( !Contains( copy_layer_label_boxes << Get Keys, layer_key ),
+        copy_layer_label_boxes[layer_key] = Associative Array();
     );
-    layer_labels = copy_layer_label_boxes_runtime[layer_key];
+    layer_labels = copy_layer_label_boxes[layer_key];
     label_key = Uppercase( Trim( Char( button_label ) ) );
     If( Contains( layer_labels << Get Keys, label_key ),
+        If( use_sigma_panel,
+            copy_layer_boxes_sigma_runtime = copy_layer_boxes;
+            copy_layer_label_boxes_sigma_runtime = copy_layer_label_boxes;
+        ,
+            copy_layer_boxes_mean_runtime = copy_layer_boxes;
+            copy_layer_label_boxes_mean_runtime = copy_layer_label_boxes;
+        );
         Return();
     );
     layer_labels[label_key] = 1;
@@ -91,6 +206,15 @@ Append_Copy_Button = Function({config, layer_name, button_label, copy_target, de
                 )
             )
         )
+    );
+
+    // Persist per-panel layer/group state so later calls append to the same layer outline.
+    If( use_sigma_panel,
+        copy_layer_boxes_sigma_runtime = copy_layer_boxes;
+        copy_layer_label_boxes_sigma_runtime = copy_layer_label_boxes;
+    ,
+        copy_layer_boxes_mean_runtime = copy_layer_boxes;
+        copy_layer_label_boxes_mean_runtime = copy_layer_label_boxes;
     );
 );
 
@@ -117,6 +241,16 @@ Format_Trend_Charts = Function({trend_chart_object, type, config},
     tinc = config["tinc"];
     val_show_splines = config["show_splines"];
     tech_str = config["tech_str"];
+    dataset_title_str = config["dataset_title_str"];
+    If( Is Missing( dataset_title_str ) | dataset_title_str == "",
+        dataset_title_str = tech_str;
+    );
+    dataset_title_str = config["dataset_title_str"];
+    If( Is Missing( dataset_title_str ) | dataset_title_str == "",
+        dataset_title_str = tech_str;
+    );
+    time_axis_min = config["time_axis_min"];
+    time_axis_max = config["time_axis_max"];
 
     Treports = trend_chart_object << Report;
     j=0;
@@ -141,6 +275,22 @@ Format_Trend_Charts = Function({trend_chart_object, type, config},
 
         rpt[1][Frame Box(1)] << {Marker Drawing Mode("Outlined")};
 		rpt[AxisBox(1)] << Axis Settings({Min(-3), Max(3), Inc(yinc),Minor Ticks(1)});
+        rpt[ScaleBox(1)] << {
+            Interval("Week"),
+            Inc(tinc),
+            Minor Ticks(0),
+            Label Row({
+                Label Orientation("Angled"),
+                Show Major Grid(1),
+                Show Minor Grid(1)
+            })
+        };
+        If( !Is Missing( time_axis_min ) & !Is Missing( time_axis_max ),
+            Try(
+                rpt[ScaleBox(1)] << Min( time_axis_min );
+                rpt[ScaleBox(1)] << Max( time_axis_max );
+            );
+        );
 
         rpt << Set Title( "ALL LAYERS" );	
     ,
@@ -163,7 +313,7 @@ Format_Trend_Charts = Function({trend_chart_object, type, config},
             y_col_display = Substitute(y_col_name, "_", " ");
             
             If(type!="APC",
-                new_title = y_col_display || " " || tech_str || " HCCD NEST " || layer_value;
+                new_title = y_col_display || " " || dataset_title_str || " HCCD NEST " || layer_value;
 
                 If(type=="MEAN",
                     rpt[AxisBox(1)] << Add Ref Line( recent_limits_mdttucl[layer_value], "Solid", UCL_COLOR, ucl_label);
@@ -192,6 +342,12 @@ Format_Trend_Charts = Function({trend_chart_object, type, config},
                     Show Minor Grid(1)
                 })
             };		
+            If( !Is Missing( time_axis_min ) & !Is Missing( time_axis_max ),
+                Try(
+                    rpt[ScaleBox(1)] << Min( time_axis_min );
+                    rpt[ScaleBox(1)] << Max( time_axis_max );
+                );
+            );
 
             rpt << Set Title( new_title );	
 
@@ -227,8 +383,19 @@ Format_Trend_Charts = Function({trend_chart_object, type, config},
                         copy_target_source = "FrameBox(1)";
                     );
                 );
-                button_label = If( type == "MEAN", "TrendMEAN", "TrendAPC" );
-                Append_Copy_Button( config, layer_value, button_label, copy_target, "Trend" );
+                If( type == "MEAN",
+                    button_label = "TrendMEAN";
+                    panel_key = "MEAN";
+                ,
+                    If( type == "SIGMA",
+                        button_label = "TrendSIGMA";
+                        panel_key = "SIGMA";
+                    ,
+                        button_label = "TrendAPC";
+                        panel_key = "MEAN";
+                    );
+                );
+                Append_Copy_Button( config, layer_value, button_label, copy_target, "Trend", panel_key );
             );
         );
     );
@@ -289,7 +456,7 @@ Format_Variability_Charts = Function({var_chart_object, stat, type, xcol, config
         Filter Each({seg},(mySegs), (seg<< class name)=="BoxPlotSeg") << Set Line Color("Black");
         If(type=="DTT",	
             If(stat=="MEAN",				
-                rpt << Set Title( tech_str || " MEAN DTT HCCD NEST" );
+                rpt << Set Title( dataset_title_str || " MEAN DTT HCCD NEST" );
                 rpt[AxisBox(1)] << Add Ref Line( recent_limits_mdttucl[wec_layer], "Solid", UCL_COLOR, ucl_label);
                 rpt[AxisBox(1)] << Add Ref Line( recent_limits_mdttcl[wec_layer], "Solid", CL_COLOR, cl_label);
                 rpt[AxisBox(1)] << Add Ref Line( recent_limits_mdttlcl[wec_layer], "Solid", LCL_COLOR, lcl_label );
@@ -297,7 +464,7 @@ Format_Variability_Charts = Function({var_chart_object, stat, type, xcol, config
             ); 
                 
             If(stat=="SIGMA",
-                rpt << Set Title( tech_str || " SIGMA DTT HCCD NEST" );
+                rpt << Set Title( dataset_title_str || " SIGMA DTT HCCD NEST" );
                 rpt[AxisBox(1)] << Axis Settings({Min(ymin), Max(ymax), Inc(yinc),Minor Ticks(0)});
                 rpt[AxisBox(1)] << Add Ref Line( recent_limits_sdttucl[wec_layer], "Solid", UCL_COLOR, ucl_label);
                 rpt[AxisBox(1)] << Add Ref Line( recent_limits_sdttcl[wec_layer], "Solid", CL_COLOR, cl_label);
@@ -366,17 +533,18 @@ Format_Variability_Charts = Function({var_chart_object, stat, type, xcol, config
                         copy_target_source = "FrameBox(1)";
                     );
                 );
-                Append_Copy_Button( config, wec_layer, button_label, copy_target, "Var" );
+                panel_key = If( stat == "SIGMA", "SIGMA", "MEAN" );
+                Append_Copy_Button( config, wec_layer, button_label, copy_target, "Var", panel_key );
             );
 
             
         , //ELSE TYPE == TARGET
             If(stat=="MEAN",
-                rpt << Set Title( tech_str || " MEAN TARGET HCCD NEST" );
+                rpt << Set Title( dataset_title_str || " MEAN TARGET HCCD NEST" );
             ); 
                 
             If(type=="SIGMA",
-                rpt << Set Title( tech_str || " SIGMA TARGET HCCD NEST" );
+                rpt << Set Title( dataset_title_str || " SIGMA TARGET HCCD NEST" );
             ); 
             
             varchart_groups=rpt[AxisBox(2)] << Get Max;
@@ -417,7 +585,8 @@ Format_Variability_Charts = Function({var_chart_object, stat, type, xcol, config
                     );
                 );
                 button_label = "VarTAR";
-                Append_Copy_Button( config, wec_layer, button_label, copy_target, "Var" );
+                panel_key = If( stat == "SIGMA", "SIGMA", "MEAN" );
+                Append_Copy_Button( config, wec_layer, button_label, copy_target, "Var", panel_key );
             );
         ); 
     );
@@ -426,14 +595,19 @@ Format_Variability_Charts = Function({var_chart_object, stat, type, xcol, config
 // ============================================================
 // MAIN DATA PROCESSING FUNCTION
 // ============================================================
-ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, chamber_list, selected_member, val_include_sigma, val_no_splines, val_dataset, val_apc_suc_only, val_include_full_history, dlg_win},
+ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, chamber_list, selected_member, val_include_sigma, val_no_splines, val_dataset, val_site, val_apc_suc_only, val_include_full_history, dlg_win},
     
     // Derive dataset label for use in titles
     tech_str = If(val_dataset == 1, "1278", "1280");
+    dataset_title_str = If(
+        val_dataset == 1,
+        If( val_site == 1, "1278 D1V", "1278 F32" ),
+        "1280 D1V"
+    );
 
     // Configuration object
     config = Associative Array();
-    config["window_title"] = tech_str || " HCCD SDTT Report";
+    config["window_title"] = dataset_title_str || " HCCD SDTT Report";
     config["varchart_group_width"] = 40;
     config["LIMIT_COLOR"] = "Black";
     config["vcol1"] = "CHAMBER";	
@@ -467,9 +641,47 @@ ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, cha
     config["jittered"] = 0;
     config["show_splines"] = 1 - val_no_splines;
     config["tech_str"] = tech_str;
+    config["dataset_title_str"] = dataset_title_str;
 
-    // Select path based on dataset radio selection (1=1278 APC, 2=1280)
-    path = If(val_dataset == 1, path_1278, path_1280);
+    // Select source path.
+    // 1278 prefers APC files but now falls back when 60-day APC files are not present.
+    // 1280 remains fixed.
+    If( val_dataset == 1,
+        site_60day_apc = If( val_site == 1, path_1278_d1v_60day_apc, path_1278_f32_60day_apc );
+        site_full_apc = If( val_site == 1, path_1278_d1v_apc, path_1278_f32_apc );
+        site_60day_non_apc = If( val_site == 1,
+            "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_HCCD_D1V_60day.csv",
+            "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_HCCD_F32_60day.csv"
+        );
+
+        If( val_include_full_history == 1,
+            path = site_full_apc;
+        ,
+            // Preferred unchecked path is 60-day APC, then full APC, then 60-day non-APC.
+            If( File Exists( site_60day_apc ),
+                path = site_60day_apc;
+            ,
+                If( File Exists( site_full_apc ),
+                    path = site_full_apc;
+                    Debug_Trace( "Fallback: 60day APC missing, using full APC" );
+                ,
+                    If( File Exists( site_60day_non_apc ),
+                        path = site_60day_non_apc;
+                        Debug_Trace( "Fallback: APC sources missing, using 60day non-APC" );
+                    ,
+                        path = site_60day_apc;
+                    );
+                );
+            );
+        );
+    ,
+        path = path_1280;
+    );
+    Debug_Trace( "Resolved source path: " || Char( path ) );
+    If( !File Exists( path ),
+        Debug_Trace( "Source path missing/unreadable: " || Char( path ) );
+        Throw( "Missing source CSV: " || Char( path ) );
+    );
 
     // Apply close reports/windows BEFORE opening new data.
     // Use a manual loop instead of Close All("Reports") so the input dialog survives.
@@ -510,18 +722,16 @@ ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, cha
         dt << Clear Select;
     );
 
-    // Default lookback window: keep only latest 45 days unless full history is selected
-    If( val_include_full_history != 1,
-        max_ts = Col Max( :DATA_COLLECTION_TIME );
-        If( !Is Missing( max_ts ),
-            cutoff_ts = max_ts - In Days( 45 );
-            dt << Select Where( Is Missing( :DATA_COLLECTION_TIME ) | :DATA_COLLECTION_TIME < cutoff_ts );
-            dt << Delete Rows;
-            dt << Clear Select;
-        ,
-            Show( "DATA_COLLECTION_TIME has no valid timestamps. Skipping 45-day filter." );
-        );
+    // Shared x-axis window for all time-trend charts (MEAN/APC/SIGMA).
+    time_axis_min = Col Min( :DATA_COLLECTION_TIME );
+    time_axis_max = Col Max( :DATA_COLLECTION_TIME );
+    If( !Is Missing( time_axis_min ) & !Is Missing( time_axis_max ),
+        time_axis_min = time_axis_min - In Days( 1 );
+        time_axis_max = time_axis_max + In Days( 1 );
     );
+    config["time_axis_min"] = time_axis_min;
+    config["time_axis_max"] = time_axis_max;
+    Debug_Trace( "Shared time axis min=" || Char( time_axis_min ) || " max=" || Char( time_axis_max ) );
 
     // chamber_list is already set from dialog selection above
     dt << New Column( "CHAMBER",Character,Set Each Value(If(Contains( chamber_list, :SUBENTITY ),:SUBENTITY,"FLEET")));
@@ -585,14 +795,20 @@ ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, cha
     //legendcol2 = config["legendcol2"];
     filter_str = config["filter_str"];
 
-    copy_button_list = V List Box();
-    copy_button_panel = Outline Box( "COPY", copy_button_list );
-    config["copy_button_list"] = copy_button_list;
-    config["copy_layer_boxes"] = Associative Array();
-    config["copy_layer_label_boxes"] = Associative Array();
-    copy_button_list_runtime = copy_button_list;
-    copy_layer_boxes_runtime = Associative Array();
-    copy_layer_label_boxes_runtime = Associative Array();
+    copy_button_list_mean = V List Box();
+    copy_button_panel_mean = Outline Box( "COPY MEAN", copy_button_list_mean );
+    copy_button_list_sigma = V List Box();
+    copy_button_panel_sigma = Outline Box( "COPY SIGMA", copy_button_list_sigma );
+
+    config["copy_button_list_mean"] = copy_button_list_mean;
+    config["copy_button_list_sigma"] = copy_button_list_sigma;
+
+    copy_button_list_mean_runtime = copy_button_list_mean;
+    copy_layer_boxes_mean_runtime = Associative Array();
+    copy_layer_label_boxes_mean_runtime = Associative Array();
+    copy_button_list_sigma_runtime = copy_button_list_sigma;
+    copy_layer_boxes_sigma_runtime = Associative Array();
+    copy_layer_label_boxes_sigma_runtime = Associative Array();
 
     // Create the main window
     SDTT_win=New Window(selected_member || " - " || updated_window_title,
@@ -660,7 +876,7 @@ ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, cha
 
 
                 H List Box(
-                    copy_button_panel,
+                    copy_button_panel_mean,
                     fg_trend_dtt_mean= dt << FitGroup(
                         trend_dtt_mean=Bivariate(Y( Column( ycol0)),X( Column ( xcol ) ),By( Column ( bycol1 )),
                             GroupBy( Column( legendcol1) ),
@@ -728,6 +944,10 @@ ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, cha
                         SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" TARGET BY "||bycol1 ), Close ( 0 ) })), 
                     );
                     Format_Variability_Charts(var_dtt_mean_tar,mean,target,1,config,vcol3,"VarTAR");,
+
+                    If(val_include_sigma == 1,
+                        copy_button_panel_sigma
+                    );,
 
                     If(val_include_sigma == 1,
                             fg_trend_dtt_sigma= dt << FitGroup(
@@ -810,14 +1030,105 @@ ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, cha
 // ============================================================
 // PERSISTENT USER INPUT DIALOG
 // ============================================================
+Run_Generate_Report = Function( {},
+    Debug_Trace( "Run_Generate_Report click start" );
+
+    // Get current values from dialog
+    val_cb_close_reports_and_windows = cb_close_reports_and_windows << Get;
+    val_include_full_history = cb_include_full_history << Get;
+    val_include_sigma = cb_include_sigma << Get;
+    val_no_splines = cb_no_splines << Get;
+    val_apc_suc_only = cb_apc_suc_only << Get;
+    val_dataset_choice = rbDataset << Get;
+    If( val_dataset_choice == 1,
+        val_dataset = 1;
+        val_site = 1;
+    ,
+        If( val_dataset_choice == 2,
+            val_dataset = 1;
+            val_site = 2;
+        ,
+            val_dataset = 2;
+            val_site = 1;
+        );
+    );
+    val_data_type = rbDataType << Get;
+    val_chamber_index = rbChamber << Get;
+    Debug_Trace(
+        "Inputs dataset_choice=" || Char( val_dataset_choice ) ||
+        " include_full_history=" || Char( val_include_full_history ) ||
+        " apc_suc_only=" || Char( val_apc_suc_only ) ||
+        " data_type=" || Char( val_data_type )
+    );
+
+    // Resolve chamber override
+    picker_raw_d1v = subentity_picker_lb_d1v << Get Selected;
+    picker_selection_d1v = Normalize_Subentity_Selection( picker_raw_d1v, subentity_picker_visible_d1v );
+    picker_raw_f32 = subentity_picker_lb_f32 << Get Selected;
+    picker_selection_f32 = Normalize_Subentity_Selection( picker_raw_f32, subentity_picker_visible_f32 );
+
+    picker_selection = picker_selection_d1v;
+    For( i = 1, i <= N Items( picker_selection_f32 ), i++,
+        Insert Into( picker_selection, picker_selection_f32[i] );
+    );
+    If( N Items( picker_selection ) > 0,
+        picker_selection = Associative Array( picker_selection ) << Get Keys;
+        Sort List( picker_selection );
+    );
+    Debug_Trace( "Picker selection count=" || Char( N Items( picker_selection ) ) );
+
+    If( N Items( picker_selection ) > 0,
+        subentity_picker_selected = picker_selection;
+        chamber_list = subentity_picker_selected;
+        selected_member = "CUSTOM PICKER: " || Char( N Items( chamber_list ) ) || " SUBENTITY";
+    ,
+        SUBENTITY_STR = Trim(SUBENTITY_TB << Get Text());
+        If(SUBENTITY_STR != "",
+            chamber_list = Words(SUBENTITY_STR, ",");
+            For(i = 1, i <= N Items(chamber_list), i++,
+                chamber_list[i] = Trim(chamber_list[i]);
+            );
+            selected_member = "CUSTOM: " || SUBENTITY_STR;
+        ,
+            ENTITY_STR = Trim(ENTITY_TB << Get Text());
+            PM_STR = Trim(PM_TB << Get Text());
+            If(ENTITY_STR != "" & PM_STR != "",
+                CHAMBER_STR = "AME4" || ENTITY_STR || "_PM" || PM_STR;
+                chamber_list = {};
+                Insert Into(chamber_list, CHAMBER_STR);
+                selected_member = "CUSTOM: " || CHAMBER_STR;
+            ,
+                chamber_list = chamber_data[val_chamber_index][2];
+                selected_member = chamber_data[val_chamber_index][1];
+            );
+        );
+    );
+    Debug_Trace( "Resolved chamber_list count=" || Char( N Items( chamber_list ) ) || " selected_member=" || selected_member );
+
+    // Call the data processing function
+    Try(
+        ProcessSDTTData(val_cb_close_reports_and_windows, val_data_type, chamber_list, selected_member, val_include_sigma, val_no_splines, val_dataset, val_site, val_apc_suc_only, val_include_full_history, dialog_window);
+        Debug_Trace( "Run_Generate_Report click success" );
+    ,
+        Debug_Trace( "Run_Generate_Report click failure" );
+        Show( "CHAMBER_DISPO_ERROR", "Generate Report failed", "dataset_choice", val_dataset_choice, "val_dataset", val_dataset, "val_site", val_site, "selected_member", selected_member );
+        Throw();
+    );
+);
+
 dialog_window = New Window( "SDTT Report Options", 
     V List Box(
         H List Box(
-            Panel Box("Tool Owner",
-                rbChamber = Radio Box( {"Trey", "Kayden", "Chang", "Adi", "Travis", "Tyler", "Mathius", "Sashank", "William", "Minog"} ),
+            V List Box(
+                Panel Box("Tool Owner",
+                    rbChamber = Radio Box( {"Trey", "Kayden", "Chang", "Adi", "Travis", "Tyler", "Mathius", "Sashank", "William", "Minog"} ),
+                ),
+                Panel Box("DATASET",
+                    rbDataset = Radio Box( {"1278 D1V", "1278 F32", "1280 D1V"} ),
+                )
             ),
             V List Box(
-                Panel Box("SINGLE CHAMBER OVERRIDE  (supersedes tool owner selection)",
+                Panel Box("SINGLE SUBENTITY & LIST OVERRIDE",
                     Lineup Box(N Col(7),
                         Text Box( "AME4" ), ENTITY_TB = Text Edit Box( "", <<Set Width( 25 ) ),
                         Text Box( "_PM" ), PM_TB = Text Edit Box( "", <<Set Width( 12 ) ),
@@ -825,74 +1136,90 @@ dialog_window = New Window( "SDTT Report Options",
                         Text Box( "  — or full SUBENTITY:" ), SUBENTITY_TB = Text Edit Box( "", <<Set Width( 100 ) ),
                     ),
                 ),
-                Panel Box("OPTIONS",
-                    V List Box(
-						cb_close_reports_and_windows = Check Box( "Close Reports & Windows" ),
-                        cb_include_full_history = Check Box( "Include Full History" ),
-                        cb_include_sigma = Check Box( "Include Sigma Charts" ),
-                        cb_no_splines = Check Box( "No Splines" ),
-                        cb_apc_suc_only = Check Box( "APC FB Success Only (APC_FB_SUC=1)" ),
-                    ),
-                ),
-                Panel Box("DATASET",
-                    rbDataset = Radio Box( {"1278 (APC)", "1280"} ),
-                ),
-                Panel Box("DATA TYPE",
-                    rbDataType = Radio Box(
-                        {"SPC (chart points only)","ALLSTATS (all measured wafers)"}
-                    ),
-                ),
                 H List Box(
-                    Button Box( "Generate Report",
-                    // Get current values from dialog
-                    val_cb_close_reports_and_windows = cb_close_reports_and_windows << Get;
-                    val_include_full_history = cb_include_full_history << Get;
-                    val_include_sigma = cb_include_sigma << Get;
-                    val_no_splines = cb_no_splines << Get;
-                    val_apc_suc_only = cb_apc_suc_only << Get;
-                    val_dataset = rbDataset << Get;
-                    val_data_type = rbDataType << Get;
-                    val_chamber_index = rbChamber << Get;
-
-                    // Resolve chamber override
-                    SUBENTITY_STR = Trim(SUBENTITY_TB << Get Text());
-                    If(SUBENTITY_STR != "",
-                        chamber_list = Words(SUBENTITY_STR, ",");
-                        For(i = 1, i <= N Items(chamber_list), i++,
-                            chamber_list[i] = Trim(chamber_list[i]);
-                        );
-                        selected_member = "CUSTOM: " || SUBENTITY_STR;
-                    ,
-                        ENTITY_STR = Trim(ENTITY_TB << Get Text());
-                        PM_STR = Trim(PM_TB << Get Text());
-                        If(ENTITY_STR != "" & PM_STR != "",
-                            CHAMBER_STR = "AME4" || ENTITY_STR || "_PM" || PM_STR;
-                            chamber_list = {};
-                            Insert Into(chamber_list, CHAMBER_STR);
-                            selected_member = "CUSTOM: " || CHAMBER_STR;
-                        ,
-                            chamber_list = chamber_data[val_chamber_index][2];
-                            selected_member = chamber_data[val_chamber_index][1];
-                        );
-                    );
-                    
-                    // Call the data processing function
-                    ProcessSDTTData(val_cb_close_reports_and_windows, val_data_type, chamber_list, selected_member, val_include_sigma, val_no_splines, val_dataset, val_apc_suc_only, val_include_full_history, dialog_window);
-                ),
-                Button Box( "Close Dialog",
-                    dialog_window << Close Window;
+                    Panel Box("SUBENTITY FORM OVERRIDE",
+                        V List Box(
+                            subentity_tab_box = Tab Box(
+                                "D1V",
+                                V List Box(
+                                    H List Box(
+                                        SUBENTITY_FILTER_TB_D1V = Text Edit Box( "", <<Set Width( 90 ) ),
+                                        Button Box( "Search",
+                                            filter_text = SUBENTITY_FILTER_TB_D1V << Get Text;
+                                            subentity_picker_visible_d1v = Filter_Subentity_Fleet_List( subentity_fleet_d1v, filter_text );
+                                            subentity_picker_lb_d1v << Set Items( subentity_picker_visible_d1v );
+                                        )
+                                    ),
+                                    subentity_picker_lb_d1v = List Box( subentity_picker_visible_d1v, Max Selected( 200 ) ),
+                                    subentity_picker_lb_d1v << Set N Lines( 8 ),
+                                    subentity_picker_lb_d1v << Set Width( 125 ),
+                                    subentity_picker_lb_d1v << Set Height( 160 )
+                                ),
+                                "F32",
+                                V List Box(
+                                    H List Box(
+                                        SUBENTITY_FILTER_TB_F32 = Text Edit Box( "", <<Set Width( 90 ) ),
+                                        Button Box( "Search",
+                                            filter_text = SUBENTITY_FILTER_TB_F32 << Get Text;
+                                            subentity_picker_visible_f32 = Filter_Subentity_Fleet_List( subentity_fleet_f32, filter_text );
+                                            subentity_picker_lb_f32 << Set Items( subentity_picker_visible_f32 );
+                                        )
+                                    ),
+                                    subentity_picker_lb_f32 = List Box( subentity_picker_visible_f32, Max Selected( 200 ) ),
+                                    subentity_picker_lb_f32 << Set N Lines( 8 ),
+                                    subentity_picker_lb_f32 << Set Width( 125 ),
+                                    subentity_picker_lb_f32 << Set Height( 160 )
+                                )
+                            ),
+                            H List Box(
+                                Button Box( "Clear Selected",
+                                    subentity_picker_selected = {};
+                                    subentity_picker_lb_d1v << Set Items( subentity_picker_visible_d1v );
+                                    subentity_picker_lb_f32 << Set Items( subentity_picker_visible_f32 );
+                                )
+                            )
+                        )
+                    ),
+                    V List Box(
+                        Panel Box("OPTIONS",
+                            V List Box(
+							cb_close_reports_and_windows = Check Box( "Close Reports & Windows" ),
+                                cb_include_full_history = Check Box( "Include Full History" ),
+                                cb_include_sigma = Check Box( "Include Sigma Charts" ),
+                                cb_no_splines = Check Box( "No Splines" ),
+                                cb_apc_suc_only = Check Box( "APC_FB_SUC=1" ),
+                            ),
+                        ),
+                        Panel Box("DATA TYPE",
+                            rbDataType = Radio Box(
+                                {"SPC (chart points only)","ALLSTATS (all measured wafers)"}
+                            ),
+                        ),
+                        H List Box(
+                            Button Box( "Generate Report",
+                                Run_Generate_Report();
+                            ),
+                            Button Box( "Close Dialog",
+                                dialog_window << Close Window;
+                            )
+                        )
+                    )
                 )
             ) // H List Box (buttons)
         ), // V List Box (right column)
     ), // H List Box (top-level left/right split)
-),
 );
 
 
 // Usage tracking - final version
 log_path = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\backups\sDTT_Chamber_Dispo_log.txt";
+usage_tracking_enabled = 0;
 
 track_usage = Function({},
+    If( usage_tracking_enabled != 1,
+        Return();
+    );
+
     Try(
         timestamp = Char(Today());
         log_entry = timestamp || " - Script usage" || "\n";

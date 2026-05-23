@@ -448,7 +448,9 @@ class QueryBuilder:
         AND w.CHART_POINT_SEQ=cp.CHART_POINT_SEQ
         WHERE cp.SPCS_ID IN ({spcs_id_str})
           AND  ((cp.MEASUREMENT_SET_NAME='CD.FCCD_STATISTICS.80' AND string_contains(c.CHART_ATTRIBUTES,'STRUCTURE=NEST','AND',';')=1) OR
-            (cp.MEASUREMENT_SET_NAME='CD.DCCD_STATISTICS.80' AND string_contains(c.CHART_ATTRIBUTES,'STRUCTURE=NEST','AND',';')=1))
+                        (cp.MEASUREMENT_SET_NAME='CD.FCCD_STATISTICS_ST.80' AND string_contains(c.CHART_ATTRIBUTES,'STRUCTURE=NEST','AND',';')=1) OR
+                        (cp.MEASUREMENT_SET_NAME='CD.DCCD_STATISTICS.80' AND string_contains(c.CHART_ATTRIBUTES,'STRUCTURE=NEST','AND',';')=1) OR
+                        (cp.MEASUREMENT_SET_NAME='CD.DCCD_STATISTICS_ST.80' AND string_contains(c.CHART_ATTRIBUTES,'STRUCTURE=NEST','AND',';')=1))
           AND NVL(cp.WAFER,w.WAFER) IS NOT NULL
         ) x
         WHERE x.PASS_ORDER=1
@@ -465,6 +467,8 @@ class DataProcessor:
 
     @staticmethod
     def parse_attributes(attr_string):
+        if not isinstance(attr_string, str) or not attr_string:
+            return {}
         attributes = {}
         pairs = attr_string.strip(';').split(';')
         for pair in pairs:
@@ -472,6 +476,32 @@ class DataProcessor:
                 variable, value = pair.split('=', 1)
                 attributes[variable] = value
         return attributes
+
+    @staticmethod
+    def extract_cd_layer(test_name_series, measurement_set_series=None):
+        """Extract CD/LAYER from TEST_NAME with fallbacks for naming drift."""
+        test_names = test_name_series.fillna('').astype(str)
+
+        if measurement_set_series is not None:
+            meas_sets = measurement_set_series.fillna('').astype(str)
+        else:
+            meas_sets = pd.Series('', index=test_names.index)
+
+        # Supports BM0, legacy Mxx, and newer MTx patterns, with optional trailing H.
+        layer = test_names.str.extract(r'(?i)\.((?:BM0)|(?:M(?:T)?\d{1,2}))H?$', expand=False)
+
+        # CD is derived from TEST_NAME first, then falls back to measurement set.
+        cd = test_names.str.extract(r'(?i)\.([FDH]CCD)\.', expand=False)
+        cd = cd.fillna(meas_sets.str.extract(r'(?i)\.([FDH]CCD)_', expand=False))
+        cd = cd.str.upper()
+        layer = layer.str.upper()
+
+        # Historical HCCD convention: trailing H can encode HCCD from FCCD pattern.
+        # Keep this restricted to FCCD to avoid accidental remapping of other CD families.
+        h_mask = test_names.str.endswith('H', na=False) & cd.eq('FCCD')
+        cd = cd.where(~h_mask, 'H' + cd.str[1:])
+
+        return cd.fillna('UNKNOWN'), layer.fillna('')
 
     @staticmethod
     def chunk_list(spcs, chunk_length):
@@ -521,11 +551,11 @@ class DataProcessor:
         df_pivot.columns = ['_'.join(col).strip() for col in df_pivot.columns.values]
         df_pivot.reset_index(inplace=True)
 
-        # 1280 CD and LAYER extraction — slices [5:9] / [10:13]
-        df_pivot['CD'] = df_pivot['TEST_NAME'].str.slice(start=5, stop=9)
-        condition = df_pivot['TEST_NAME'].str.endswith('H')
-        df_pivot.loc[condition, 'CD'] = 'H' + df_pivot.loc[condition, 'CD'].str[1:]
-        df_pivot['LAYER'] = df_pivot['TEST_NAME'].str.slice(start=10, stop=13)
+        # Parse CD/LAYER with regex to support both legacy and newer TEST_NAME patterns.
+        df_pivot['CD'], df_pivot['LAYER'] = DataProcessor.extract_cd_layer(
+            df_pivot['TEST_NAME'],
+            df_pivot['MEASUREMENT_SET_NAME'] if 'MEASUREMENT_SET_NAME' in df_pivot.columns else None,
+        )
 
         self.logger.info(f"Measurements data processed: {len(df_pivot)} pivoted records")
         return df_pivot
@@ -536,6 +566,11 @@ class DataProcessor:
         PILOT_NAME guard: 1280 often lacks this column in allstats results.
         """
         self.logger.info(f"Processing allstats data: {len(df_raw)} raw records")
+
+        common_cols = ['SPCS_ID', 'TEST_NAME', 'WAFER_ID']
+        if df_raw.empty:
+            self.logger.warning("Allstats query returned 0 rows; returning empty frame with join keys")
+            return pd.DataFrame(columns=common_cols)
 
         parsed_data = df_raw['ATTRIBUTES'].apply(DataProcessor.parse_attributes)
         new_columns_df = pd.DataFrame(parsed_data.tolist())
@@ -551,6 +586,13 @@ class DataProcessor:
         pivot_index = ['WAFER_ID', 'SPCS_ID', 'DYNWAFER', 'IS_POR']
         pivot_column = ['CD_TERMS']
         pivot_values = ['VALUE']
+
+        if 'CD_TERMS' not in df_attr_split.columns:
+            self.logger.warning("Allstats data missing CD_TERMS; skipping pivot for this chunk")
+            existing = [c for c in common_cols if c in df_attr_split.columns]
+            if len(existing) == len(common_cols):
+                return df_attr_split[common_cols].drop_duplicates()
+            return pd.DataFrame(columns=common_cols)
 
         df_pivot_nomerge = df_attr_split.pivot_table(
             index=pivot_index, columns=pivot_column, values=pivot_values, aggfunc='first')
@@ -569,6 +611,11 @@ class DataProcessor:
         """Process statistics data with pivot."""
         self.logger.info(f"Processing statistics data: {len(df_raw)} raw records")
 
+        common_cols = ['SPCS_ID', 'TEST_NAME', 'WAFER_ID']
+        if df_raw.empty:
+            self.logger.warning("Statistics query returned 0 rows; returning empty frame with join keys")
+            return pd.DataFrame(columns=common_cols)
+
         parsed_data = df_raw['CHART_ATTRIBUTES'].apply(DataProcessor.parse_attributes)
         new_columns_df = pd.DataFrame(parsed_data.tolist())
         df_attr_split = pd.concat([df_raw, new_columns_df], axis=1)
@@ -580,6 +627,13 @@ class DataProcessor:
                         'VALID_FLAG', 'STANDARD_FLAG', 'CORRECTED_FLAG', 'INCONTROL_FLAG',
                         'INDISPOSITION_FLAG', 'VIOLATED_RULE_NOTATION', 'CHART_ID', 'CHART_TYPE',
                         'CHART_POINT_SEQ']
+
+        if 'CD_TERMS' not in df_attr_split.columns:
+            self.logger.warning("Statistics data missing CD_TERMS; skipping pivot for this chunk")
+            existing = [c for c in common_cols if c in df_attr_split.columns]
+            if len(existing) == len(common_cols):
+                return df_attr_split[common_cols].drop_duplicates()
+            return pd.DataFrame(columns=common_cols)
 
         df_pivot_nomerge = df_attr_split.pivot_table(
             index=pivot_index, columns=pivot_column, values=pivot_values, aggfunc='first')
