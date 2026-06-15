@@ -4,15 +4,10 @@ Names Default To Here( 1 );
 // ============================================================
 // GLOBAL CONFIGURATION AND PATHS
 // ============================================================
-integrated_output_dir = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\";
-dataset_options       = {"1278 D1V", "1278 F32", "1278 D1V & F32", "1280 D1V"};
-
-path_1278_d1v = integrated_output_dir || "1278sDTT_HCCD_D1V_APC.csv";
-path_1278_f32 = integrated_output_dir || "1278sDTT_HCCD_F32_APC.csv";
-path_1278_d1v_60day = integrated_output_dir || "1278sDTT_HCCD_D1V_60day_APC.csv";
-path_1278_f32_60day = integrated_output_dir || "1278sDTT_HCCD_F32_60day_APC.csv";
-path_1280_d1v = integrated_output_dir || "1280sDTT_HCCD_D1V.csv";
-path_1280_f32 = integrated_output_dir || "1280sDTT_HCCD_F32.csv";
+dataset_str = "1280 KARC FCCD D1V";
+tech_str    = "1280";
+path_karc_fccd_d1v = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\adaptations\1280KARC\integrated_output\1280sDTT_KARC_FCCD_D1V_Ed.csv";
+allowed_structures = {"NESTVIA_PR", "NESTVIA_HM", "TRENCH", "ETE"};
 
 rowFBheight = 355;
 chvfl_height = 80;
@@ -38,15 +33,13 @@ Debug_Trace = Function( {msg},
     );
 );
 
-// Layer lists keyed by owner (name, layer_list)
-// 5-9 -> MT5-MT9, 10-14 -> M10-M14, BM0 as-is.
-layer_owner_data = {
-    {"All Owners", {"MT5","MT6","MT7","MT8","MT9","M10","M11","M12","M13","M14","BM0"}},
-    {"Tyler",      {"MT5","MT6","MT7"}},
-    {"Trey",       {"MT8","MT9","M10"}},
-    {"William",    {"M11","M12"}},
-    {"Adi",        {"M13","M14"}},
-    {"Kayden",     {"BM0"}}
+// Structure selections may optionally imply default layer sets.
+structure_layer_data = {
+    {"All Structures", {"MT1"}},
+    {"TRENCH", {"MT1"}},
+    {"ETE", {"MT1"}},
+    {"NESTVIA_PR", {"MT1"}},
+    {"NESTVIA_HM", {"MT1"}}
 };
 
 // ============================================================
@@ -120,11 +113,11 @@ Normalize_List_Selection = Function( {raw_selection, visible_items},
     out;
 );
 
-Owner_To_Layers = Function( {owner_name},
+Structure_To_Layers = Function( {structure_name},
     out = {};
-    For( oi = 1, oi <= N Items( layer_owner_data ), oi++,
-        If( layer_owner_data[oi][1] == owner_name,
-            out = layer_owner_data[oi][2];
+    For( oi = 1, oi <= N Items( structure_layer_data ), oi++,
+        If( structure_layer_data[oi][1] == structure_name,
+            out = structure_layer_data[oi][2];
             Break();
         );
     );
@@ -132,6 +125,37 @@ Owner_To_Layers = Function( {owner_name},
 );
 
 Extract_Layer_Value = Function( {raw_text},
+    raw_char = Trim( Char( raw_text ) );
+    raw_upper = Uppercase( raw_char );
+
+    structure_pos = Contains( raw_upper, "STRUCTURE=" );
+    If( structure_pos > 0,
+        struct_val = Trim( Substr( raw_char, structure_pos + 10 ) );
+        If( struct_val != "",
+            Return( struct_val );
+        );
+    );
+
+    struct_pos = Contains( raw_upper, "STRUCT=" );
+    If( struct_pos > 0,
+        struct_val = Trim( Substr( raw_char, struct_pos + 7 ) );
+        If( struct_val != "",
+            Return( struct_val );
+        );
+    );
+
+    by_pos = Contains( Uppercase( raw_char ), " BY " );
+    If( by_pos > 0,
+        by_value = Trim( Substr( raw_char, by_pos + 4 ) );
+        eq_pos = Contains( by_value, "=" );
+        If( eq_pos > 0,
+            by_value = Trim( Substr( by_value, eq_pos + 1 ) );
+        );
+        If( by_value != "",
+            Return( by_value );
+        );
+    );
+
     txt = Uppercase( Char( raw_text ) );
     tokens = Words( txt, " =-_:()[]{}|/,\t\r\n" );
     For( ti = 1, ti <= N Items( tokens ), ti++,
@@ -150,14 +174,18 @@ Extract_Layer_Value = Function( {raw_text},
     Trim( Char( raw_text ) );
 );
 
-Lookup_Limit_Value = Function( {aa_map, layer_key},
+Format_Struct_Label = Function( {group_value},
+    "STRUCT=" || Uppercase( Trim( Char( group_value ) ) );
+);
+
+Lookup_Limit_Value = Function( {aa_map, group_key},
     value = .;
-    Try( value = aa_map[layer_key] );
+    Try( value = aa_map[group_key] );
     If( !Is Missing( value ),
         Return( value );
     );
 
-    key_norm = Uppercase( Trim( Char( layer_key ) ) );
+    key_norm = Uppercase( Trim( Char( group_key ) ) );
     keys = aa_map << Get Keys;
     For( ki = 1, ki <= N Items( keys ), ki++,
         If( Uppercase( Trim( Char( keys[ki] ) ) ) == key_norm,
@@ -189,83 +217,6 @@ Parse_Pilot_List = Function( {raw_text},
         );
     );
     pilots;
-);
-
-// ============================================================
-// APPLY_TARGET_REGIME_FILTER
-// Retains only rows in the most recent continuous target regime
-// for each PROD_MOP_PILOT group.
-// Requires: PROD_MOP_PILOT, DATA_COLLECTION_TIME, ALLSTATS_MEAN_TARGET_VALUE
-// ============================================================
-Apply_Target_Regime_Filter = Function( {dt},
-    dt << Sort(
-        By( :PROD_MOP_PILOT, :DATA_COLLECTION_TIME ),
-        Order( Ascending, Ascending ),
-        Replace Table,
-        Output Table( "" )
-    );
-
-    If( Try( Column( dt, "TARGET_GROUP_KEY" ); 1, 0 ) == 0,
-        dt << New Column( "TARGET_GROUP_KEY", Character, Formula( Char( :PROD_MOP_PILOT ) ) );
-    ,
-        Column( dt, "TARGET_GROUP_KEY" ) << Delete Formula;
-        Column( dt, "TARGET_GROUP_KEY" ) << Set Each Value( Char( :PROD_MOP_PILOT ) );
-    );
-
-    If( Try( Column( dt, "TARGET_REGIME_LATEST" ); 1, 0 ) == 0,
-        dt << New Column( "TARGET_REGIME_LATEST", Numeric, Continuous, Format( "Best", 8 ), Set Each Value( 0 ) );
-    ,
-        Column( dt, "TARGET_REGIME_LATEST" ) << Delete Formula;
-        Column( dt, "TARGET_REGIME_LATEST" ) << Set Each Value( 0 );
-    );
-
-    unique_keys = Associative Array( dt:TARGET_GROUP_KEY ) << Get Keys;
-    Debug_Trace( "Target regime filter: groups=" || Char( N Items( unique_keys ) ) );
-
-    For( k = 1, k <= N Items( unique_keys ), k++,
-        gkey = unique_keys[k];
-        rows = dt << Get Rows Where( :TARGET_GROUP_KEY == gkey );
-        If( N Items( rows ) == 0, Continue() );
-
-        n = N Items( rows );
-        last_row = rows[n];
-        last_tgt = Num( dt:ALLSTATS_MEAN_TARGET_VALUE[last_row] );
-
-        If( Is Missing( last_tgt ),
-            For( j = 1, j <= n, j++,
-                dt:TARGET_REGIME_LATEST[rows[j]] = 1;
-            );
-            Debug_Trace( "REGIME " || gkey || " | last target missing, kept all " || Char( n ) || " rows" );
-            Continue();
-        );
-
-        regime_start = n;
-        While( regime_start > 1,
-            prev_tgt = Num( dt:ALLSTATS_MEAN_TARGET_VALUE[rows[regime_start - 1]] );
-            If( Is Missing( prev_tgt ) | prev_tgt != last_tgt,
-                Break();
-            );
-            regime_start = regime_start - 1;
-        );
-
-        For( j = regime_start, j <= n, j++,
-            dt:TARGET_REGIME_LATEST[rows[j]] = 1;
-        );
-
-        Debug_Trace(
-            "REGIME " || gkey ||
-            " | last target=" || Char( last_tgt ) ||
-            " | kept=" || Char( n - regime_start + 1 ) ||
-            " | dropped=" || Char( regime_start - 1 )
-        );
-    );
-
-    before_rows = N Rows( dt );
-    dt << Select Where( :TARGET_REGIME_LATEST != 1 );
-    dt << Delete Rows;
-    dt << Clear Select;
-    Debug_Trace( "Target regime filter complete. Before=" || Char( before_rows ) || " | After=" || Char( N Rows( dt ) ) );
-    dt;
 );
 
 Can_Get_Report = Function( {obj},
@@ -427,6 +378,7 @@ Align_Copy_Outline_Heights = Function( {stat_label, trend_obj, panel_key = "MEAN
         _tr = _tr_reports[_ri];
         _row_label = _tr << Get Title;
         _layer_key = Extract_Layer_Value( _row_label );
+        _layer_key = Format_Struct_Label( _layer_key );
         _target_h = Get_Report_Height( _tr );
         If( Is Missing( _target_h ) | _layer_key == "",
             Continue();
@@ -591,12 +543,12 @@ resolve_product_name = Function( {raw_product},
 // ============================================================
 Format_Trend_Charts = Function( {trend_chart_object, type, config},
 
-    recent_limits_mdttucl = config["recent_limits_mdttucl"];
-    recent_limits_mdttcl  = config["recent_limits_mdttcl"];
-    recent_limits_mdttlcl = config["recent_limits_mdttlcl"];
-    recent_limits_sdttucl = config["recent_limits_sdttucl"];
-    recent_limits_sdttcl  = config["recent_limits_sdttcl"];
-    recent_limits_sdttlcl = config["recent_limits_sdttlcl"];
+    structure_limits_mean_ucl  = config["structure_limits_mean_ucl"];
+    structure_limits_mean_cl   = config["structure_limits_mean_cl"];
+    structure_limits_mean_lcl  = config["structure_limits_mean_lcl"];
+    structure_limits_sigma_ucl = config["structure_limits_sigma_ucl"];
+    structure_limits_sigma_cl  = config["structure_limits_sigma_cl"];
+    structure_limits_sigma_lcl = config["structure_limits_sigma_lcl"];
     legendcol1       = config["legendcol1"];
     UCL_COLOR        = config["UCL_COLOR"];
     CL_COLOR         = config["CL_COLOR"];
@@ -609,6 +561,7 @@ Format_Trend_Charts = Function( {trend_chart_object, type, config},
     val_show_splines = config["show_splines"];
     dataset_title_str = "";
     Try( dataset_title_str = config["dataset_title_str"] );
+    dataset_title_compact = Substitute( dataset_title_str, " D1V", "" );
     time_axis_min    = config["time_axis_min"];
     time_axis_max    = config["time_axis_max"];
 
@@ -660,19 +613,20 @@ Format_Trend_Charts = Function( {trend_chart_object, type, config},
             );
             rpt[1][Frame Box( 1 )] << {Marker Drawing Mode( "Outlined" )};
 
-            // Extract Y column name and WEC_LAYER value from panel title
+            // Extract Y column name and by-group value from panel title
             of_pos        = Contains( current_by_value, "of " );
             by_pos        = Contains( current_by_value, " By " );
             y_col_name    = Substr( current_by_value, of_pos + 3, by_pos - of_pos - 3 );
             layer_value   = Extract_Layer_Value( current_by_value );
+            struct_label  = Format_Struct_Label( layer_value );
             y_col_display = Substitute( y_col_name, "_", " " );
 
-            new_title = y_col_display || " " || dataset_title_str || " HCCD NEST " || layer_value;
+            new_title = y_col_display || " " || dataset_title_compact || " " || struct_label;
 
             If( type == "MEAN",
-                mean_ucl = Lookup_Limit_Value( recent_limits_mdttucl, layer_value );
-                mean_cl  = Lookup_Limit_Value( recent_limits_mdttcl, layer_value );
-                mean_lcl = Lookup_Limit_Value( recent_limits_mdttlcl, layer_value );
+                mean_ucl = Lookup_Limit_Value( structure_limits_mean_ucl, layer_value );
+                mean_cl  = Lookup_Limit_Value( structure_limits_mean_cl, layer_value );
+                mean_lcl = Lookup_Limit_Value( structure_limits_mean_lcl, layer_value );
                 If( !Is Missing( mean_ucl ) & !Is Missing( mean_cl ) & !Is Missing( mean_lcl ),
                     rpt[AxisBox( 1 )] << Add Ref Line( mean_ucl, "Solid", UCL_COLOR, ucl_label );
                     rpt[AxisBox( 1 )] << Add Ref Line( mean_cl,  "Solid", CL_COLOR,  cl_label  );
@@ -686,9 +640,9 @@ Format_Trend_Charts = Function( {trend_chart_object, type, config},
             );
 
             If( type == "SIGMA",
-                sigma_ucl = Lookup_Limit_Value( recent_limits_sdttucl, layer_value );
-                sigma_cl  = Lookup_Limit_Value( recent_limits_sdttcl, layer_value );
-                sigma_lcl = Lookup_Limit_Value( recent_limits_sdttlcl, layer_value );
+                sigma_ucl = Lookup_Limit_Value( structure_limits_sigma_ucl, layer_value );
+                sigma_cl  = Lookup_Limit_Value( structure_limits_sigma_cl, layer_value );
+                sigma_lcl = Lookup_Limit_Value( structure_limits_sigma_lcl, layer_value );
                 If( !Is Missing( sigma_ucl ) & !Is Missing( sigma_cl ) & !Is Missing( sigma_lcl ),
                     rpt[AxisBox( 1 )] << Add Ref Line( sigma_ucl, "Solid", UCL_COLOR, ucl_label );
                     rpt[AxisBox( 1 )] << Add Ref Line( sigma_cl,  "Solid", CL_COLOR,  cl_label  );
@@ -724,7 +678,7 @@ Format_Trend_Charts = Function( {trend_chart_object, type, config},
 
             panel_key = "MEAN";
             If( type == "SIGMA", panel_key = "SIGMA" );
-            Append_Copy_Button( config, layer_value, "Trend", rpt, panel_key );
+            Append_Copy_Button( config, struct_label, "Trend", rpt, panel_key );
 
             If( val_show_splines == 1, rpt[BorderBox( 3 )] << Visibility( "Collapse" ) );
             rpt[FrameBox( 1 )] << Set Height( rowFBheight );
@@ -760,12 +714,12 @@ Format_Trend_Charts = Function( {trend_chart_object, type, config},
 
 Format_Variability_Charts = Function( {var_chart_object, stat, config, vcol},
 
-    recent_limits_mdttucl = config["recent_limits_mdttucl"];
-    recent_limits_mdttcl  = config["recent_limits_mdttcl"];
-    recent_limits_mdttlcl = config["recent_limits_mdttlcl"];
-    recent_limits_sdttucl = config["recent_limits_sdttucl"];
-    recent_limits_sdttcl  = config["recent_limits_sdttcl"];
-    recent_limits_sdttlcl = config["recent_limits_sdttlcl"];
+    structure_limits_mean_ucl  = config["structure_limits_mean_ucl"];
+    structure_limits_mean_cl   = config["structure_limits_mean_cl"];
+    structure_limits_mean_lcl  = config["structure_limits_mean_lcl"];
+    structure_limits_sigma_ucl = config["structure_limits_sigma_ucl"];
+    structure_limits_sigma_cl  = config["structure_limits_sigma_cl"];
+    structure_limits_sigma_lcl = config["structure_limits_sigma_lcl"];
     UCL_COLOR             = config["UCL_COLOR"];
     CL_COLOR              = config["CL_COLOR"];
     LCL_COLOR             = config["LCL_COLOR"];
@@ -781,6 +735,7 @@ Format_Variability_Charts = Function( {var_chart_object, stat, config, vcol},
     If( dataset_title_str == "",
         dataset_title_str = tech_str;
     );
+    dataset_title_compact = Substitute( dataset_title_str, " D1V", "" );
 
     Vreports_raw = var_chart_object << Report;
     If( Type( Vreports_raw ) == "List",
@@ -792,6 +747,7 @@ Format_Variability_Charts = Function( {var_chart_object, stat, config, vcol},
     For Each( {rpt}, Vreports,
         current_by_value = rpt << Get Title;
         layer_value      = Extract_Layer_Value( current_by_value );
+        struct_label     = Format_Struct_Label( layer_value );
         detail_title     = "";
 
         rpt[1][Frame Box( 1 )] << {Marker Drawing Mode( "Outlined" )};
@@ -808,10 +764,10 @@ Format_Variability_Charts = Function( {var_chart_object, stat, config, vcol},
         Filter Each( {seg}, (mySegs), (seg << Class Name) == "BoxPlotSeg" ) << Set Line Color( "Black" );
 
         If( stat == "MEAN",
-            detail_title = dataset_title_str || " MEAN DTT HCCD NEST BY " || vcol;
-            mean_ucl = Lookup_Limit_Value( recent_limits_mdttucl, layer_value );
-            mean_cl  = Lookup_Limit_Value( recent_limits_mdttcl, layer_value );
-            mean_lcl = Lookup_Limit_Value( recent_limits_mdttlcl, layer_value );
+            detail_title = dataset_title_compact || " MEAN DTT BY " || vcol;
+            mean_ucl = Lookup_Limit_Value( structure_limits_mean_ucl, layer_value );
+            mean_cl  = Lookup_Limit_Value( structure_limits_mean_cl, layer_value );
+            mean_lcl = Lookup_Limit_Value( structure_limits_mean_lcl, layer_value );
             If( !Is Missing( mean_ucl ) & !Is Missing( mean_cl ) & !Is Missing( mean_lcl ),
                 rpt[AxisBox( 1 )] << Add Ref Line( mean_ucl, "Solid", UCL_COLOR, ucl_label );
                 rpt[AxisBox( 1 )] << Add Ref Line( mean_cl,  "Solid", CL_COLOR,  cl_label  );
@@ -825,10 +781,10 @@ Format_Variability_Charts = Function( {var_chart_object, stat, config, vcol},
         );
 
         If( stat == "SIGMA",
-            detail_title = dataset_title_str || " SIGMA DTT HCCD NEST BY " || vcol;
-            sigma_ucl = Lookup_Limit_Value( recent_limits_sdttucl, layer_value );
-            sigma_cl  = Lookup_Limit_Value( recent_limits_sdttcl, layer_value );
-            sigma_lcl = Lookup_Limit_Value( recent_limits_sdttlcl, layer_value );
+            detail_title = dataset_title_compact || " SIGMA DTT BY " || vcol;
+            sigma_ucl = Lookup_Limit_Value( structure_limits_sigma_ucl, layer_value );
+            sigma_cl  = Lookup_Limit_Value( structure_limits_sigma_cl, layer_value );
+            sigma_lcl = Lookup_Limit_Value( structure_limits_sigma_lcl, layer_value );
             If( !Is Missing( sigma_ucl ) & !Is Missing( sigma_cl ) & !Is Missing( sigma_lcl ),
                 rpt[AxisBox( 1 )] << Add Ref Line( sigma_ucl, "Solid", UCL_COLOR, ucl_label );
                 rpt[AxisBox( 1 )] << Add Ref Line( sigma_cl,  "Solid", CL_COLOR,  cl_label  );
@@ -847,11 +803,11 @@ Format_Variability_Charts = Function( {var_chart_object, stat, config, vcol},
         If( detail_title == "",
             detail_title = "DTT BY " || vcol;
         );
-        rpt[1][OutlineBox( 2 )] << Set Title( detail_title || "  -  " || layer_value );
+        rpt[1][OutlineBox( 2 )] << Set Title( detail_title || "  -  " || struct_label );
 
         panel_key = "MEAN";
         If( stat == "SIGMA", panel_key = "SIGMA" );
-        Append_Copy_Button( config, layer_value, "Var", rpt, panel_key );
+        Append_Copy_Button( config, struct_label, "Var", rpt, panel_key );
 
         varchart_groups = rpt[AxisBox( 2 )] << Get Max;
         varchart_width  = varchart_groups * varchart_group_width * 0.6;
@@ -918,14 +874,15 @@ Format_Variability_Charts = Function( {var_chart_object, stat, config, vcol},
 // ============================================================
 ProcessFLEETData = Function(
     {val_cb_close_reports_and_windows, val_data_type,
-     layer_mode, selected_layers,
-    val_include_full_history, val_include_sigma, val_show_splines, val_dataset_choice,
-    legendcol1, var_x_group_col, selected_owner, val_apc_model = 1,
-    val_show_btool = 0, val_show_target = 0, val_spline_width = 2, val_pilot_filter = {}, val_current_target_only = 0},
+    layer_mode, selected_layers,
+    structure_mode, selected_structures,
+    val_include_full_history, val_include_sigma, val_show_splines,
+    legendcol1, var_x_group_col,
+    val_show_target = 0, val_spline_width = 2, val_pilot_filter = {}},
 
     // ---- Configuration ----
     config = Associative Array();
-    config["bycol1"]       = "WEC_LAYER";
+    config["bycol1"]       = "STRUCTURE";
     config["xcol"]         = "DATA_COLLECTION_TIME";
     config["legendcol1"]   = legendcol1;
     config["ycol0"]        = "ALLSTATS_MEAN_DTT_VALUE";
@@ -950,39 +907,11 @@ ProcessFLEETData = Function(
         Close All( "Data Tables", "NoSave" );
     );
 
-    dataset_str = dataset_options[val_dataset_choice];
-    tech_str = If( val_dataset_choice == 4, "1280", "1278" );
     config["tech_str"] = tech_str;
-    dataset_title_str = If(
-        val_dataset_choice == 1, "1278 D1V",
-        val_dataset_choice == 2, "1278 F32",
-        val_dataset_choice == 3, "1278 D1V & F32",
-        "1280 D1V"
-    );
+    dataset_title_str = dataset_str;
     config["dataset_title_str"] = dataset_title_str;
 
-    source_paths = {};
-    If( val_dataset_choice == 4,
-        source_paths = {path_1280_d1v};
-    ,
-        If( val_include_full_history == 1,
-            d1v_src = path_1278_d1v;
-            f32_src = path_1278_f32;
-        ,
-            d1v_src = path_1278_d1v_60day;
-            f32_src = path_1278_f32_60day;
-        );
-
-        If( val_dataset_choice == 1,
-            source_paths = {d1v_src};
-        ,
-            If( val_dataset_choice == 2,
-                source_paths = {f32_src};
-            ,
-                source_paths = {d1v_src, f32_src};
-            );
-        );
-    );
+    source_paths = {path_karc_fccd_d1v};
 
     If( N Items( source_paths ) == 0,
         Throw( "No source path configured for dataset " || dataset_str );
@@ -996,18 +925,6 @@ ProcessFLEETData = Function(
 
     dt = Open( path );
     dt = Current Data Table();
-
-    // ---- Concatenate any additional sources ----
-    For( sp = 2, sp <= N Items( source_paths ), sp++,
-        path2 = source_paths[sp];
-        If( !Is Missing( path2 ) & path2 != "" & File Exists( path2 ),
-            dt2 = Open( path2 );
-            dt << Concatenate( dt2, Append to First Table );
-            dt2 << Close Window;
-        ,
-            Show( "Source not found for dataset " || dataset_str || " — skipping: " || path2 );
-        );
-    );
 
     // ---- PRODUCT_NAME and SITE_PRODUCT_NAME columns ----
     dt << New Column( "PRODUCT_NAME", Character );
@@ -1032,27 +949,9 @@ ProcessFLEETData = Function(
         dt << Clear Select;
     );
 
-    // ---- Target regime filter (current target only) ----
-    If( val_current_target_only == 1,
-        Apply_Target_Regime_Filter( dt );
-    );
-
-    // ---- APC MODEL filter ----
-    // 1 = All Models (no filter), 2 = AMECT_ICCR2 only, 3 = MFGAMECT_FLOW_TEMP only.
-    If( val_apc_model == 2,
-        dt << Select Where( :APC_AREA != "AMECT_ICCR2" );
-        dt << Delete Rows;
-        dt << Clear Select;
-    ,
-        If( val_apc_model == 3,
-            dt << Select Where( :APC_AREA != "MFGAMECT_FLOW_TEMP" );
-            dt << Delete Rows;
-            dt << Clear Select;
-        );
-    );
-
     // ---- Layer filter (destructive) ----
     // layer_mode: 1 = All Layers, 2 = Filter Layers
+    layer_title_str = "All Layers";
     If( layer_mode == 2 & N Items( selected_layers ) > 0,
         dataset_layers = Associative Array( dt:LAYER ) << Get Keys;
         valid_selected_layers = {};
@@ -1067,9 +966,6 @@ ProcessFLEETData = Function(
             dt << Delete Rows;
             dt << Clear Select;
             layer_title_str = Concat Items( valid_selected_layers, " " );
-            If( selected_owner != "All Owners",
-                layer_title_str = selected_owner || " - " || layer_title_str;
-            );
         ,
             layer_title_str = "All Layers";
             Show( "Selected layers not present in dataset — running with All Layers." );
@@ -1077,6 +973,42 @@ ProcessFLEETData = Function(
     ,
         layer_title_str = "All Layers";
     );
+
+    // ---- Enforce approved structure scope (destructive) ----
+    dt << Select Where( !Contains( allowed_structures, Char( :STRUCTURE ) ) );
+    dt << Delete Rows;
+    dt << Clear Select;
+
+    // ---- Structure filter (destructive) ----
+    structure_title_str = "All Structures";
+    If( structure_mode == 2 & N Items( selected_structures ) > 0,
+        selected_structures_filtered = {};
+        For( i = 1, i <= N Items( selected_structures ), i++,
+            If( Contains( allowed_structures, selected_structures[i] ),
+                Insert Into( selected_structures_filtered, selected_structures[i] );
+            );
+        );
+
+        dataset_structures = Associative Array( dt:STRUCTURE ) << Get Keys;
+        valid_selected_structures = {};
+        For( i = 1, i <= N Items( selected_structures_filtered ), i++,
+            If( Contains( dataset_structures, selected_structures_filtered[i] ),
+                Insert Into( valid_selected_structures, selected_structures_filtered[i] );
+            );
+        );
+
+        If( N Items( valid_selected_structures ) > 0,
+            dt << Select Where( !Contains( valid_selected_structures, :STRUCTURE ) );
+            dt << Delete Rows;
+            dt << Clear Select;
+            structure_title_str = Concat Items( valid_selected_structures, " " );
+        ,
+            structure_title_str = "All Structures";
+            Show( "Selected structures not present in dataset — running with All Structures." );
+        );
+    );
+
+    scope_title_str = layer_title_str || " | " || structure_title_str;
 
     // ---- PROD_MOP_PILOT filter (destructive) ----
     If( N Items( val_pilot_filter ) > 0,
@@ -1124,6 +1056,7 @@ ProcessFLEETData = Function(
     dt << New Column( "GTO",        Character );
     dt << New Column( "OPC",        Character );
     dt << New Column( "AME_GTO_OPC", Character );
+    dt << New Column( "PG_MOP_PILOT", Character );
 
     n_rows = N Rows( dt );
     For( i = 1, i <= n_rows, i++,
@@ -1139,6 +1072,22 @@ ProcessFLEETData = Function(
             dt:OPC[i]         = "POR";
             dt:AME_GTO_OPC[i] = "POR";
         );
+
+        // Build PG_MOP_PILOT = PRODUCT_GROUP || "_" || SPC_OPERATION || "_" || SPC_PILOT (or SPC_PILOT_NAME)
+        product_group_value = Trim( Char( dt:PRODUCT_GROUP[i] ) );
+        spc_operation_value = Trim( Char( dt:SPC_OPERATION[i] ) );
+        spc_pilot_value = "";
+
+        Try(
+            spc_pilot_value = Trim( Char( dt:SPC_PILOT[i] ) );
+        );
+        If( spc_pilot_value == "",
+            Try(
+                spc_pilot_value = Trim( Char( dt:SPC_PILOT_NAME[i] ) );
+            );
+        );
+
+        dt:PG_MOP_PILOT[i] = product_group_value || "_" || spc_operation_value || "_" || spc_pilot_value;
     );
 
     // ---- Color / mark by user-chosen legend column ----
@@ -1150,65 +1099,111 @@ ProcessFLEETData = Function(
     );
 
     // ---- Table label ----
-    dt << Set Name( "sDTT FLEET " || dataset_str || "  —  " || layer_title_str || "  —  " || data_type_str );
+    dt << Set Name( "sDTT FLEET " || dataset_str || "  —  " || scope_title_str || "  —  " || data_type_str );
     dt << Set Label Columns( :SPC_LOT );
 
-    // ---- Load SPC limits from POR rows ----
-    unique_layers         = Associative Array( dt:WEC_LAYER ) << Get Keys;
-    recent_limits_mdttucl = Associative Array();
-    recent_limits_mdttcl  = Associative Array();
-    recent_limits_mdttlcl = Associative Array();
-    recent_limits_sdttucl = Associative Array();
-    recent_limits_sdttcl  = Associative Array();
-    recent_limits_sdttlcl = Associative Array();
+    // ---- Load SPC limits from POR rows keyed by STRUCTURE ----
+    bycol1 = config["bycol1"];
+    Summarize( dt, unique_groups = By( :STRUCTURE ) );
+    structure_limits_mean_ucl     = Associative Array();
+    structure_limits_mean_cl      = Associative Array();
+    structure_limits_mean_lcl     = Associative Array();
+    structure_limits_sigma_ucl    = Associative Array();
+    structure_limits_sigma_cl     = Associative Array();
+    structure_limits_sigma_lcl    = Associative Array();
 
-    For( i = 1, i <= N Items( unique_layers ), i++,
-        current_layer = unique_layers[i];
-        normalized_layer = Extract_Layer_Value( current_layer );
-        If( normalized_layer == "",
-            normalized_layer = current_layer;
-        );
+    For( i = 1, i <= N Items( unique_groups ), i++,
+        current_group = unique_groups[i];
 
-        rows = dt << Get Rows Where( :WEC_LAYER == current_layer & :IS_POR == "True" );
-        If( N Items( rows ) == 0,
-            rows = dt << Get Rows Where( :WEC_LAYER == current_layer & !Is Missing( :STATISTICS_MEAN_DTT_UCL ) );
-        );
+        rows = dt << Get Rows Where( :STRUCTURE == current_group );
         If( N Items( rows ) == 0,
             Continue();
         );
 
-        first_row_for_layer = rows[1];
-        mean_ucl = dt:STATISTICS_MEAN_DTT_UCL[first_row_for_layer];
-        mean_cl  = dt:STATISTICS_MEAN_DTT_CENTERLINE[first_row_for_layer];
-        mean_lcl = dt:STATISTICS_MEAN_DTT_LCL[first_row_for_layer];
-        sigma_ucl = dt:STATISTICS_SIGMA_DTT_UCL[first_row_for_layer];
-        sigma_cl  = dt:STATISTICS_SIGMA_DTT_CENTERLINE[first_row_for_layer];
-        sigma_lcl = dt:STATISTICS_SIGMA_DTT_LCL[first_row_for_layer];
+        mean_row = .;
+        sigma_row = .;
 
-        recent_limits_mdttucl[current_layer] = mean_ucl;
-        recent_limits_mdttcl[current_layer]  = mean_cl;
-        recent_limits_mdttlcl[current_layer] = mean_lcl;
-        recent_limits_sdttucl[current_layer] = sigma_ucl;
-        recent_limits_sdttcl[current_layer]  = sigma_cl;
-        recent_limits_sdttlcl[current_layer] = sigma_lcl;
+        // Prefer POR rows that have complete limit triples.
+        For( ri = 1, ri <= N Items( rows ), ri++,
+            r = rows[ri];
+            is_por_row = 0;
+            Try( is_por_row = Uppercase( Trim( Char( dt:IS_POR[r] ) ) ) == "TRUE" );
 
-        recent_limits_mdttucl[normalized_layer] = mean_ucl;
-        recent_limits_mdttcl[normalized_layer]  = mean_cl;
-        recent_limits_mdttlcl[normalized_layer] = mean_lcl;
-        recent_limits_sdttucl[normalized_layer] = sigma_ucl;
-        recent_limits_sdttcl[normalized_layer]  = sigma_cl;
-        recent_limits_sdttlcl[normalized_layer] = sigma_lcl;
+            If( is_por_row,
+                If( Is Missing( mean_row )
+                    & !Is Missing( dt:STATISTICS_MEAN_DTT_UCL[r] )
+                    & !Is Missing( dt:STATISTICS_MEAN_DTT_CENTERLINE[r] )
+                    & !Is Missing( dt:STATISTICS_MEAN_DTT_LCL[r] ),
+                    mean_row = r;
+                );
+                If( Is Missing( sigma_row )
+                    & !Is Missing( dt:STATISTICS_SIGMA_DTT_UCL[r] )
+                    & !Is Missing( dt:STATISTICS_SIGMA_DTT_CENTERLINE[r] )
+                    & !Is Missing( dt:STATISTICS_SIGMA_DTT_LCL[r] ),
+                    sigma_row = r;
+                );
+            );
+        );
+
+        // Fallback to any row with complete limit triples.
+        If( Is Missing( mean_row ) | Is Missing( sigma_row ),
+            For( ri = 1, ri <= N Items( rows ), ri++,
+                r = rows[ri];
+                If( Is Missing( mean_row )
+                    & !Is Missing( dt:STATISTICS_MEAN_DTT_UCL[r] )
+                    & !Is Missing( dt:STATISTICS_MEAN_DTT_CENTERLINE[r] )
+                    & !Is Missing( dt:STATISTICS_MEAN_DTT_LCL[r] ),
+                    mean_row = r;
+                );
+                If( Is Missing( sigma_row )
+                    & !Is Missing( dt:STATISTICS_SIGMA_DTT_UCL[r] )
+                    & !Is Missing( dt:STATISTICS_SIGMA_DTT_CENTERLINE[r] )
+                    & !Is Missing( dt:STATISTICS_SIGMA_DTT_LCL[r] ),
+                    sigma_row = r;
+                );
+            );
+        );
+
+        mean_ucl = .;
+        mean_cl  = .;
+        mean_lcl = .;
+        sigma_ucl = .;
+        sigma_cl  = .;
+        sigma_lcl = .;
+
+        If( !Is Missing( mean_row ),
+            mean_ucl = dt:STATISTICS_MEAN_DTT_UCL[mean_row];
+            mean_cl  = dt:STATISTICS_MEAN_DTT_CENTERLINE[mean_row];
+            mean_lcl = dt:STATISTICS_MEAN_DTT_LCL[mean_row];
+        );
+        If( !Is Missing( sigma_row ),
+            sigma_ucl = dt:STATISTICS_SIGMA_DTT_UCL[sigma_row];
+            sigma_cl  = dt:STATISTICS_SIGMA_DTT_CENTERLINE[sigma_row];
+            sigma_lcl = dt:STATISTICS_SIGMA_DTT_LCL[sigma_row];
+        );
+
+        structure_limits_mean_ucl[current_group]  = mean_ucl;
+        structure_limits_mean_cl[current_group]   = mean_cl;
+        structure_limits_mean_lcl[current_group]  = mean_lcl;
+        structure_limits_sigma_ucl[current_group] = sigma_ucl;
+        structure_limits_sigma_cl[current_group]  = sigma_cl;
+        structure_limits_sigma_lcl[current_group] = sigma_lcl;
+
+        Debug_Trace(
+            "LIMIT MAP | struct=" || Char( current_group ) ||
+            " mean=[" || Char( mean_lcl ) || "," || Char( mean_cl ) || "," || Char( mean_ucl ) || "]" ||
+            " sigma=[" || Char( sigma_lcl ) || "," || Char( sigma_cl ) || "," || Char( sigma_ucl ) || "]"
+        );
     );
 
-    config["recent_limits_mdttucl"] = recent_limits_mdttucl;
-    config["recent_limits_mdttcl"]  = recent_limits_mdttcl;
-    config["recent_limits_mdttlcl"] = recent_limits_mdttlcl;
-    config["recent_limits_sdttucl"] = recent_limits_sdttucl;
-    config["recent_limits_sdttcl"]  = recent_limits_sdttcl;
-    config["recent_limits_sdttlcl"] = recent_limits_sdttlcl;
+    config["structure_limits_mean_ucl"]  = structure_limits_mean_ucl;
+    config["structure_limits_mean_cl"]   = structure_limits_mean_cl;
+    config["structure_limits_mean_lcl"]  = structure_limits_mean_lcl;
+    config["structure_limits_sigma_ucl"] = structure_limits_sigma_ucl;
+    config["structure_limits_sigma_cl"]  = structure_limits_sigma_cl;
+    config["structure_limits_sigma_lcl"] = structure_limits_sigma_lcl;
 
-    // ---- Keep legacy in-JSL lookback only for 1280 ----
-    // 1278 uses file-level source selection (60-day APC vs full APC).
+    // ---- Keep legacy in-JSL lookback gate for 1280 ----
     If( tech_str == "1280" & val_include_full_history != 1,
         max_ts = Col Max( :DATA_COLLECTION_TIME );
         If( !Is Missing( max_ts ),
@@ -1260,7 +1255,7 @@ ProcessFLEETData = Function(
     // ============================================================
     // BUILD REPORT WINDOW
     // ============================================================
-    FLEET_win = New Window( "sDTT FLEET " || dataset_str || "  —  " || layer_title_str || "  —  " || data_type_str,
+    FLEET_win = New Window( "sDTT FLEET " || dataset_str || "  —  " || scope_title_str || "  —  " || data_type_str,
         lb = V List Box(
             V List Box(
 
@@ -1386,26 +1381,6 @@ ProcessFLEETData = Function(
                     );,
 
                     ///////////////////////////////////////////////////////////////
-                    // EXTRAS — B_TOOL TREND
-                    ///////////////////////////////////////////////////////////////
-                    If( val_show_btool == 1,
-                        H List Box(
-                            fg_trend_btool = dt << FitGroup(
-                                trend_btool = Bivariate(
-                                    Y( Column( "APC_B_TOOL" ) ), X( Column( xcol ) ),
-                                    By( Column( bycol1 ) ),
-                                    GroupBy( Column( legendcol1 ) ),
-                                ),
-                                SendToReport( Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "B_TOOL BY " || bycol1 ), Close( 0 )} ) ),
-                            );
-                            If( val_show_splines == 1,
-                                trend_btool << Fit Spline( 0.1, Standardized, {Report( 0 ), Line Width( val_spline_width )} )
-                            );
-                            Format_Trend_Charts( trend_btool, "NONE", config );
-                        )
-                    );,
-
-                    ///////////////////////////////////////////////////////////////
                     // EXTRAS — MEAN TARGET TREND
                     ///////////////////////////////////////////////////////////////
                     If( val_show_target == 1,
@@ -1441,7 +1416,7 @@ ProcessFLEETData = Function(
         Try( Align_Copy_Outline_Heights( "SIGMA", trend_dtt_sigma, "SIGMA" ) );
     );
 
-    Show( "sDTT FLEET processing complete — Dataset: ", dataset_str, " — Layers: ", layer_title_str );
+    Show( "sDTT FLEET processing complete — Dataset: ", dataset_str, " — Scope: ", scope_title_str );
 
 );
 
@@ -1453,15 +1428,13 @@ available_cols = {
     "WEC_RECIPE",
     "WEC_SITE",
     "ROUTE_TYPE",
+    "STRUCTURE",
     "SUBENTITY",
     "SPC_OPERATION",
     "PRODUCT",
     "SPC_PILOT_NAME",
     "PROD_MOP",
     "PROD_MOP_PILOT",
-    "APC_AREA",
-    "APC_PRODGROUP",
-    "APC_FB_SUC",
     "SCANNER",
     "ALLSTATS_CURRENT_RETICLE",
     "IS_POR",
@@ -1474,9 +1447,6 @@ available_cols = {
     "AME_ETCH",
     "GTO_ETCH",
     "PRODUCT_GROUP",
-    "APC_PRODUCT",
-    "APC_SUBENTITIES",
-    "APC_SUBENTITY",
     "WEC_ENTITY",
     "WEC_ROUTE",
     "WEC_SLOT",
@@ -1485,10 +1455,11 @@ available_cols = {
     "AME",
     "GTO",
     "OPC",
-    "AME_GTO_OPC"
+    "AME_GTO_OPC",
+    "PG_MOP_PILOT"
 };
 
-// Default legend column: SUBENTITY is at index 5 (1-based)
+// Default legend column: STRUCTURE is at index 5 (1-based)
 default_legend_idx = 5;
 
 // ============================================================
@@ -1502,10 +1473,10 @@ dialog_window = New Window( "sDTT Fleet Report Options",
             // ---- SELECT ----
             Panel Box( "SELECT",
                 V List Box(
-                    layer_tab_source = {"MT5","MT6","MT7","MT8","MT9","M10","M11","M12","M13","M14","M15","M16","BM0"};
-                    owner_tab_source = {"Tyler","Trey","William","Adi","Kayden"};
+                    layer_tab_source = {"MT1"};
+                    struct_tab_source = allowed_structures;
                     layer_tab_visible = layer_tab_source;
-                    owner_tab_visible = owner_tab_source;
+                    struct_tab_visible = struct_tab_source;
 
                     layer_owner_tab = Tab Box(
                         "LAYER",
@@ -1518,14 +1489,14 @@ dialog_window = New Window( "sDTT Fleet Report Options",
                                 layer_tab_lb << Set Items( layer_tab_visible );
                             )
                         ),
-                        "OWNER",
+                        "STRUCT",
                         V List Box(
-                            owner_tab_lb = List Box( owner_tab_visible, Max Selected( 20 ) ),
-                            owner_tab_lb << Set N Lines( 5 ),
-                            owner_tab_lb << Set Width( 72 ),
-                            owner_tab_lb << Set Height( 89 ),
+                            struct_tab_lb = List Box( struct_tab_visible, Max Selected( 20 ) ),
+                            struct_tab_lb << Set N Lines( 8 ),
+                            struct_tab_lb << Set Width( 120 ),
+                            struct_tab_lb << Set Height( 140 ),
                             Button Box( "Clear",
-                                owner_tab_lb << Set Items( owner_tab_visible );
+                                struct_tab_lb << Set Items( struct_tab_visible );
                             )
                         )
                     );
@@ -1551,26 +1522,12 @@ dialog_window = New Window( "sDTT Fleet Report Options",
                             Text Box( "  Width: " ),
                             nb_spline_width = Number Edit Box( 2, << Set Width( 3 ) ),
                         ),
-                        cb_current_target_only = Check Box( "Current Target Only" ),
-                    ),
-                ),
-
-                // ---- DATASET ----
-                Panel Box( "DATASET",
-                    rbDataset = Radio Box( dataset_options ),
-                ),
-
-                // ---- APC MODEL ----
-                Panel Box( "APC MODEL",
-                    rbApcModel = Radio Box(
-                        {"All Models", "AMECT_ICCR2", "MFGAMECT_FLOW_TEMP"}
                     ),
                 ),
 
                 // ---- EXTRAS ----
                 Panel Box( "EXTRAS",
                     V List Box(
-                        cb_show_btool   = Check Box( "B_TOOL Trend" ),
                         cb_show_target  = Check Box( "Mean Target Trend" ),
                     ),
                 ),
@@ -1601,53 +1558,39 @@ dialog_window = New Window( "sDTT Fleet Report Options",
                 val_spline_width                 = Max( 1, Round( Num( nb_spline_width << Get ), 0 ) );
                 Print( "[sDTT] val_spline_width = " || Char( val_spline_width ) );
                 val_data_type                    = rbDataType                    << Get;
-                val_dataset_choice               = rbDataset                     << Get;
-                val_apc_model                    = rbApcModel                    << Get;
-                val_show_btool                   = cb_show_btool                 << Get;
                 val_show_target                  = cb_show_target                << Get;
                 val_pilot_filter                 = Parse_Pilot_List( tb_pilot_filter << Get Text );
-                val_current_target_only          = cb_current_target_only          << Get;
                 val_legendcol1                   = available_cols[cb_legend << Get];
                 val_var_x_group_col              = val_legendcol1;
 
-                // Build selected_layers from owner/layer tabs
-                selected_layers = {};
-                val_selected_owner = "All Owners";
-
-                selected_owners = Normalize_List_Selection( owner_tab_lb << Get Selected, owner_tab_visible );
+                // Build selected layers and structures from tabs
                 selected_layer_tab = Normalize_List_Selection( layer_tab_lb << Get Selected, layer_tab_visible );
+                selected_struct_tab = Normalize_List_Selection( struct_tab_lb << Get Selected, struct_tab_visible );
 
-                // Owner tab takes precedence when both tabs have selections.
-                If( N Items( selected_owners ) > 0,
-                    For( oi = 1, oi <= N Items( selected_owners ), oi++,
-                        owner_layers = Owner_To_Layers( selected_owners[oi] );
-                        For( li = 1, li <= N Items( owner_layers ), li++,
-                            Insert Into( selected_layers, owner_layers[li] );
-                        );
-                    );
-                    selected_layers = Associative Array( selected_layers ) << Get Keys;
-                    Sort List( selected_layers );
+                selected_layers = {};
+                If( N Items( selected_layer_tab ) > 0,
+                    selected_layers = selected_layer_tab;
                     val_layer_mode = 2;
                 ,
-                    If( N Items( selected_layer_tab ) > 0,
-                        selected_layers = selected_layer_tab;
-                        val_layer_mode = 2;
-                    ,
-                        val_layer_mode = 1;
-                    );
+                    val_layer_mode = 1;
                 );
 
-                If( N Items( selected_owners ) > 0,
-                    val_selected_owner = Concat Items( selected_owners, ", " );
+                selected_structures = {};
+                If( N Items( selected_struct_tab ) > 0,
+                    selected_structures = selected_struct_tab;
+                    val_structure_mode = 2;
+                ,
+                    val_structure_mode = 1;
                 );
 
                 // Run
                 ProcessFLEETData(
                     val_cb_close_reports_and_windows, val_data_type,
                     val_layer_mode, selected_layers,
-                    val_include_full_history, val_include_sigma, val_show_splines, val_dataset_choice,
-                    val_legendcol1, val_var_x_group_col, val_selected_owner, val_apc_model,
-                    val_show_btool, val_show_target, val_spline_width, val_pilot_filter, val_current_target_only
+                    val_structure_mode, selected_structures,
+                    val_include_full_history, val_include_sigma, val_show_splines,
+                    val_legendcol1, val_var_x_group_col,
+                    val_show_target, val_spline_width, val_pilot_filter
                 );
             ),
             Button Box( "Close Dialog",

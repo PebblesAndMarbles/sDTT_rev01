@@ -2,6 +2,12 @@
 
 This repository is a code and documentation backup for the sDTT Rev01 workspace.
 
+## High-level overview
+
+This repo is intended to preserve the source code, scripts, and supporting documentation needed to reproduce the sDTT Rev01 workflow. It is not meant to store large generated outputs, runtime logs, or other transient artifacts.
+
+The current GitHub target is `PebblesAndMarbles/sDTT_rev01`. For the full push workflow, account context, and file inclusion rules, see [GitHub Push Workflow](markdown/GitHub_Push_Workflow.md).
+
 ## Scope for initial backup
 
 Tracked content:

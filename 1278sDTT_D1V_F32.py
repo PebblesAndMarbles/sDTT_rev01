@@ -1306,6 +1306,8 @@ def finalize_site_data(processor, site_cd_temp_files, layerList, site, config):
                                                 wafer_manifest_path=_use_manifest,
                                                 apc_query_lookback_days=_use_lookback,
                                                 require_area_btool_for_match_ops=config.get('require_area_btool_for_match_ops'),
+                                                require_area_btool_for_flow_temp=config.get('require_area_btool_for_flow_temp', True),
+                                                use_subentity_pm_match=config.get('use_subentity_pm_match', False),
                                                 site=site)
                     logger.info(f"APC join completed. Output: {out}")
                 except Exception as _e:

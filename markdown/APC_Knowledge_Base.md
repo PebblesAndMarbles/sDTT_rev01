@@ -1,7 +1,7 @@
 # sDTT APC Knowledge Base
 
-Last updated: 2026-05-21  
-Scope: 1278 D1V + F32 HCCD datasets; 1280 D1V currently has no APC join.
+Last updated: 2026-06-15  
+Scope: 1278 D1V + F32 HCCD datasets (full + 60-day variants, incremental APC mode); 1280 D1V currently has no APC join.
 
 ---
 
@@ -10,6 +10,10 @@ Scope: 1278 D1V + F32 HCCD datasets; 1280 D1V currently has no APC join.
 The APC join enriches each sDTT wafer-operation row with run-job parameters pulled
 from the fab APC system.  The output columns are prefixed `APC_` and joined back to
 the main sDTT CSV on `(WAFER_ID, WEC_OPERATION)`.
+
+As of 2026-06, PM-safe SUBENTITY matching is locked on in the 1278 production
+pipeline config (`use_subentity_pm_match=True`) to prevent PM-token switching on
+split-chamber rows.
 
 ---
 
@@ -262,6 +266,18 @@ uses `days=5` (SPC/WEC lookback) with `apc_query_lookback_days=10` as a secondar
 safety net when the manifest is unavailable.  Both the full `_APC.csv` and the
 `_60day_APC.csv` variants are updated incrementally each run.
 
+Important operational note (validated June 2026): `_60day_APC.csv` is not an
+independent frozen snapshot. It is refreshed by normal daily pipeline runs through
+the same incremental APC path as the full dataset variant.
+
+### PM-safe lock-in status
+
+- Current production default in `1278sDTT_PIPELINE.py` is `use_subentity_pm_match=True`.
+- The CLI flag `--use-subentity-pm-match` still exists for explicit runs, but pipeline
+  default already enables PM-safe behavior without requiring the flag.
+- A 7-day pipeline refresh on 2026-06-10 verified `pm_disagreement=0` on both D1V and
+  F32 60-day APC outputs after lock-in.
+
 ---
 
 ## 12. Chunk Size
@@ -293,9 +309,10 @@ or memory pressure on the PyUber connection.  Smaller values increase query coun
 - 1280 node has no APC join; if needed, the same pattern from 1278 applies but the
   correct DB area string(s) for 1280 chambers must be confirmed first.
 - The `_60day_APC.csv` incremental mode retains existing rows for wafers not in the
-  current manifest.  Rows that have aged out of the 60-day SPC/WEC window are not
-  actively evicted from the APC file.  The file may drift slightly over time but
-  this is harmless for JMP reporting.
+  current manifest. Rows that have aged out of the 60-day SPC/WEC window are not
+  actively evicted from the APC file. The file may drift slightly over time; this is
+  typically harmless for JMP reporting, but periodic full 60-day rebuilds can be used
+  when strict window hygiene is required.
 
 ---
 

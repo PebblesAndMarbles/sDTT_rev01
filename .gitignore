@@ -10,14 +10,22 @@ integrated_output/*.csv
 integrated_output/query_files/
 logs/
 flag_images/
+**/integrated_output/
+**/logs/
+**/flag_images/
 
 # Keep repository code-first: ignore data/log artifacts by extension
 *.csv
 *.xlsx
 *.log
 
-# Debug data dumps and generated CSV outputs
-debug/**/*.csv
+# Keep 1280KARC targeting CSVs versioned while leaving heavy outputs ignored
+!adaptations/1280KARC/prod_targeting/
+!adaptations/1280KARC/prod_targeting/*.csv
+
+# Ignore any debug folder contents
+debug/
+**/debug/
 
 # Generated local helper output
 prod_targeting/workflow

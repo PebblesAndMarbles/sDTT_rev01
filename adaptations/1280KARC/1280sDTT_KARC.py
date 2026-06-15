@@ -27,6 +27,7 @@ import gc
 import json
 import os
 import time
+import argparse
 import pandas as pd
 import numpy as np
 import PyUber
@@ -38,8 +39,10 @@ from datetime import datetime
 # ── Configuration ─────────────────────────────────────────────────────────────
 # layerRange and incBM0 are authoritative in PIPELINE_CONFIG when run via
 # the pipeline orchestrator; kept here as fallback defaults for standalone runs.
+KARC_DIR = os.path.dirname(os.path.abspath(__file__))
+
 CONFIG = {
-    'ceid': 'AMEct',
+    'ceid': 'KARC',
     'sites': ['D1V'],
 
     'database_connections': {
@@ -48,18 +51,41 @@ CONFIG = {
 
     'tech': "1280",
     'structure': "NEST",
+    'structures': ['NEST', 'NESTVIA_PR', 'NESTVIA_HM', 'TRENCH', 'ETE'],
     'tech_alias_nums': {"1278": "8", "1280": ""},
-    # Narrow range for initial test — override via PIPELINE_CONFIG for full runs
-    'layerRange': [6, 7],
+    # KARC scope: MT1 and MT2 only
+    'layerRange': [1, 1],
     'incBM0': 0,
-    'days': 7,
+    'days': 40,
     'nLots_chunk': 25,
     # debug_writes is authoritative in PIPELINE_CONFIG; True here for standalone runs.
     'debug_writes': False,
-    'folder_path': '\\\\orshfs.intel.com\\ORAnalysis$\\1276_MAODATA\\Config\\etch\\AME\\tbatson\\sDTT\\sDTT_rev01\\debug\\1280 QUERY FILES\\',
-    'main_csv_path': '\\\\orshfs.intel.com\\ORAnalysis$\\1276_MAODATA\\Config\\etch\\AME\\tbatson\\sDTT\\sDTT_rev01\\debug\\',
-    'main_csv_base_name': '1280sDTT',
-    'cd_levels': ['HCCD', 'DCCD', 'FCCD'],
+    'folder_path': os.path.join(KARC_DIR, 'debug'),
+    'main_csv_path': os.path.join(KARC_DIR, 'integrated_output'),
+    'main_csv_base_name': '1280sDTT_KARC',
+    'cd_levels': ['FCCD'],
+    'cd_alias_levels': ['FCCD'],
+    # Disable raw-measurement query/join by default to prevent row multiplication.
+    'include_raw_measurements': False,
+    # Operation filtering control:
+    # - alias-driven: current behavior (alias lookup + configured fallbacks)
+    # - explicit-operations: bypass alias lookup and use explicit operation lists below
+    'operation_filtering_mode': 'alias-driven',
+    'explicit_operations': {
+        'spc': ['270387'],
+        'wec': ['269250'],
+    },
+    # Pull FCCD sets first and derive STRUCTURE in processing; avoids over-filtering sparse MT2 runs.
+    'use_structure_sql_filter': False,
+    # If strict WEC alias lookup returns no rows, retry with a relaxed alias match.
+    'enable_wec_alias_relaxed_fallback': True,
+    # Direct OPERATION overrides for missing aliases (e.g., alias not present in F_OPERATION_ALIAS).
+    'wec_operation_overrides': {
+        'E_V0_MAIN_ETCH': ['269250'],
+        'E_V1_MAIN_ETCH': ['269250'],
+    },
+    # If alias-based WEC operation resolution is empty, query WEC by lot+wafer only.
+    'enable_wec_noop_fallback': True,
     'suppress_sqlalchemy_warnings': True,
     'log_level': 'INFO',
 }
@@ -191,7 +217,22 @@ class QueryBuilder:
           AND UPPER(a1.OPER_GROUP_NAME) IN ({all_cd_aliases_str})"""
 
     @staticmethod
-    def spclot_prefetch_query(days, mops_str, site):
+    def spclot_prefetch_query(days, mops_str, site, layer=None):
+        layer_filter = ''
+        if layer is not None:
+            # Support both MTx and legacy Mx naming, with ST/non-ST variants and optional trailing H.
+            layer_filter = f"""
+        AND (
+             UPPER(l.TEST_NAME) LIKE '%.FCCD.MT{layer}'
+          OR UPPER(l.TEST_NAME) LIKE '%.FCCD.MT{layer}H'
+          OR UPPER(l.TEST_NAME) LIKE '%.ST.FCCD.MT{layer}'
+          OR UPPER(l.TEST_NAME) LIKE '%.ST.FCCD.MT{layer}H'
+          OR UPPER(l.TEST_NAME) LIKE '%.FCCD.M{layer}'
+          OR UPPER(l.TEST_NAME) LIKE '%.FCCD.M{layer}H'
+          OR UPPER(l.TEST_NAME) LIKE '%.ST.FCCD.M{layer}'
+          OR UPPER(l.TEST_NAME) LIKE '%.ST.FCCD.M{layer}H'
+        )
+        """
         return f"""
         SELECT '{site}' "SITE"
         ,l.DATA_COLLECTION_TIME
@@ -211,10 +252,25 @@ class QueryBuilder:
         WHERE l.DATA_COLLECTION_TIME>=TRUNC(CURRENT_DATE)-{days}
         AND l.OPERATION IN ({mops_str})
         AND l.LOT_PROCESS='1280'
+        {layer_filter}
         """
 
     @staticmethod
-    def lot_run_card_query(spc_lot_str, mops_str):
+    def lot_run_card_query(spc_lot_str, mops_str, layer=None):
+        layer_filter = ''
+        if layer is not None:
+            layer_filter = f"""
+          AND (
+               UPPER(l.TEST_NAME) LIKE '%.FCCD.MT{layer}'
+            OR UPPER(l.TEST_NAME) LIKE '%.FCCD.MT{layer}H'
+            OR UPPER(l.TEST_NAME) LIKE '%.ST.FCCD.MT{layer}'
+            OR UPPER(l.TEST_NAME) LIKE '%.ST.FCCD.MT{layer}H'
+            OR UPPER(l.TEST_NAME) LIKE '%.FCCD.M{layer}'
+            OR UPPER(l.TEST_NAME) LIKE '%.FCCD.M{layer}H'
+            OR UPPER(l.TEST_NAME) LIKE '%.ST.FCCD.M{layer}'
+            OR UPPER(l.TEST_NAME) LIKE '%.ST.FCCD.M{layer}H'
+          )
+            """
         return f"""
         SELECT l.LOT "LOT"
           ,l.OPERATION
@@ -230,10 +286,24 @@ class QueryBuilder:
           AND s.LATEST_FLAG='Y'
         WHERE h.LOT IN ({spc_lot_str})
           AND h.OPERATION IN ({mops_str})
+                    {layer_filter}
         """
 
     @staticmethod
-    def spc_measurements_no_attr_split_query(spcs_id_str):
+    def spc_measurements_no_attr_split_query(spcs_id_str, structure_list=None, use_structure_filter=True):
+        if structure_list is None:
+            structure_list = ['NEST']
+        # STRUCTURE can be encoded in ATTRIBUTES or PARAMETERS, with or without trailing ';'.
+        structure_or = ' OR '.join([
+            "(" 
+            f"UPPER(NVL(a.ATTRIBUTES,'')) LIKE '%STRUCTURE={s.upper()};%' OR "
+            f"UPPER(NVL(a.ATTRIBUTES,'')) LIKE '%STRUCTURE={s.upper()}%' OR "
+            f"UPPER(NVL(a.PARAMETERS,'')) LIKE '%STRUCTURE={s.upper()};%' OR "
+            f"UPPER(NVL(a.PARAMETERS,'')) LIKE '%STRUCTURE={s.upper()}%'"
+            ")"
+            for s in structure_list
+        ])
+        structure_clause = f"AND ({structure_or})" if use_structure_filter else ""
         return f"""
         SELECT m.LOT "LOT"
           ,m.OPERATION "OPERATION"
@@ -277,13 +347,26 @@ class QueryBuilder:
           AND w.WAFER=m.WAFER
         LEFT JOIN F_LOT_WAFER_RECIPE r
           ON  r.RECIPE_ID=w.WAFER_RECIPE_ID
-                WHERE s.SPCS_ID IN ({spcs_id_str})
-                    AND  ((m.MEASUREMENT_SET_NAME='CD.FCCD_MEASUREMENTS.80' AND a.ATTRIBUTES LIKE '%;STRUCTURE=NEST;%' ESCAPE '\\') OR
-                        (m.MEASUREMENT_SET_NAME='CD.DCCD_MEASUREMENTS.80' AND a.ATTRIBUTES LIKE '%;STRUCTURE=NEST;%' ESCAPE '\\'))
+        WHERE s.SPCS_ID IN ({spcs_id_str})
+                      AND UPPER(m.MEASUREMENT_SET_NAME) LIKE 'CD.%FCCD%MEASUREMENTS%'
+                    {structure_clause}
         """
 
     @staticmethod
-    def allstats_query(spcs_id_str):
+    def allstats_query(spcs_id_str, structure_list=None, use_structure_filter=True):
+        if structure_list is None:
+            structure_list = ['NEST']
+        # STRUCTURE can be encoded in ATTRIBUTES or PARAMETERS, with or without trailing ';'.
+        structure_or = ' OR '.join([
+            "(" 
+            f"UPPER(NVL(a.ATTRIBUTES,'')) LIKE '%STRUCTURE={s.upper()};%' OR "
+            f"UPPER(NVL(a.ATTRIBUTES,'')) LIKE '%STRUCTURE={s.upper()}%' OR "
+            f"UPPER(NVL(a.PARAMETERS,'')) LIKE '%STRUCTURE={s.upper()};%' OR "
+            f"UPPER(NVL(a.PARAMETERS,'')) LIKE '%STRUCTURE={s.upper()}%'"
+            ")"
+            for s in structure_list
+        ])
+        structure_clause = f"AND ({structure_or})" if use_structure_filter else ""
         return f"""
         SELECT m.DATA_COLLECTION_TIME
           ,m.LOT "LOT"
@@ -308,25 +391,45 @@ class QueryBuilder:
           AND m.STATUS NOT IN ('M','I')
         INNER JOIN P_SPC_MEASUREMENT_ATTRIBUTE a
           ON a.ATTRIBUTE_ID=m.ATTRIBUTE_ID
-                WHERE s.SPCS_ID IN ({spcs_id_str})
-                    AND  ((m.MEASUREMENT_SET_NAME='CD.FCCD_ALLSTATS.80' AND a.ATTRIBUTES LIKE '%;STRUCTURE=NEST;%' ESCAPE '\\') OR
-                        (m.MEASUREMENT_SET_NAME='CD.DCCD_ALLSTATS.80' AND a.ATTRIBUTES LIKE '%;STRUCTURE=NEST;%' ESCAPE '\\'))
+        WHERE s.SPCS_ID IN ({spcs_id_str})
+                      AND UPPER(m.MEASUREMENT_SET_NAME) LIKE 'CD.%FCCD%ALLSTATS%'
+                    {structure_clause}
         """
 
     @staticmethod
     def process_op_aliases_query(all_wec_aliases_str, site):
         return f"""
         SELECT '{site}' "SITE"
-          ,a1.DATA_SOURCE
-          ,a1.OPERATION
-          ,a1.OPER_GROUP_KEY "GROUP_KEY"
-          ,a1.OPER_GROUP_NAME "ALIAS"
-          ,a1.OPER_INTEGRATION_LAYER "LAYER"
-          ,a1.OPER_SHORT_DESC
-          ,a1.OPER_LONG_DESC
+            ,a1.DATA_SOURCE
+            ,a1.OPERATION
+            ,a1.OPER_GROUP_KEY "GROUP_KEY"
+            ,a1.OPER_GROUP_NAME "ALIAS"
+            ,a1.OPER_INTEGRATION_LAYER "LAYER"
+            ,a1.OPER_SHORT_DESC
+            ,a1.OPER_LONG_DESC
         FROM F_OPERATION_ALIAS a1
         WHERE a1.DATA_SOURCE IN ('P1280')
-          AND UPPER(a1.OPER_GROUP_NAME) IN ({all_wec_aliases_str})
+            AND UPPER(TRIM(a1.OPER_GROUP_NAME)) IN ({all_wec_aliases_str})
+        """
+
+    @staticmethod
+    def process_op_aliases_query_relaxed(all_wec_aliases, site):
+        alias_predicates = ' OR '.join([
+            f"UPPER(NVL(a1.OPER_GROUP_NAME,'')) LIKE '%{alias.upper()}%'"
+            for alias in all_wec_aliases
+        ])
+        return f"""
+        SELECT '{site}' "SITE"
+            ,a1.DATA_SOURCE
+            ,a1.OPERATION
+            ,a1.OPER_GROUP_KEY "GROUP_KEY"
+            ,a1.OPER_GROUP_NAME "ALIAS"
+            ,a1.OPER_INTEGRATION_LAYER "LAYER"
+            ,a1.OPER_SHORT_DESC
+            ,a1.OPER_LONG_DESC
+        FROM F_OPERATION_ALIAS a1
+        WHERE ({alias_predicates})
+            AND a1.OPERATION IS NOT NULL
         """
 
     @staticmethod
@@ -369,40 +472,63 @@ class QueryBuilder:
         ON  r.RECIPE_ID=w.WAFER_RECIPE_ID
         WHERE h.EXPECTED_LOT IN ({spc_lot_str})
         AND h.OPERATION IN ({wec_op_str})
+        AND c.OPERATION IN ({wec_op_str})
         AND c.WAFER IN ({wafer_chunk_str})"""
 
     @staticmethod
-    def wec_query_sed_only(spc_lot_str, sed_op_str, wafer_chunk_str, site):
-        """Query SED operations for SCANNER and RETICLE."""
+    def wec_query_noop_fallback(spc_lot_str, wafer_chunk_str, site):
         return f"""
-        SELECT DISTINCT c.WAFER "WAFER_ID"
-        ,c.ENTITY "SCANNER"
-        ,c.SUBENTITY
+        SELECT c.LOT "LOT"
+        ,c.WAFER "WAFER_ID"
+        ,c.WAF3 "WAFER_SHORT"
         ,c.OPERATION
-        ,w.RETICLE
-        FROM F_WAFERCHAMBERHIST c
-        LEFT JOIN F_WAFERENTITYHIST w ON w.WAFER = c.WAFER
-        WHERE c.OPERATION IN ({sed_op_str})
-        AND c.WAFER IN ({wafer_chunk_str})
-        """
+        ,c.ROUTE
+        ,c.ENTITY
+        ,TO_CHAR(w.BATCH_ID) "DB_BATCH_ID"
+        ,c.CHAMBER
+        ,c.SUBENTITY
+        ,c.SUB_OPERATION
+        ,CAST(c.END_TIME AS DATE) "SUBENTITY_END_TIME"
+        ,CAST(c.START_TIME AS DATE) "SUBENTITY_START_TIME"
+        ,CAST(w.WAFER_ENTITY_END_TIME AS DATE) "ENTITY_END_TIME"
+        ,CAST(w.WAFER_ENTITY_START_TIME AS DATE) "ENTITY_START_TIME"
+        ,SUBSTR(c.ENTITY,1,3) "ENTITY_PREFIX"
+        ,TO_CHAR(CAST(H.RUNKEY AS DECIMAL(20,10))) "RUNKEY"
+        ,c.CHAMBER_PROCESS_DURATION "PROCESS_TIME"
+        ,c.CHAMBER_PROCESS_ORDER "PROCESS_ORDER"
+        ,c.CHAMBER_WAIT_DURATION "WAIT_TIME"
+        ,CAST(h.LAST_TXN_TIME AS DATE) "LAST_TXN_TIME"
+        ,c.SLOT
+        ,NVL(h.ENTITY_OWNED_BY,'{site}') "ENTITY_OWNED_BY"
+        ,r.RECIPE
+        FROM F_LOT_RUN_MAP h
+        INNER JOIN F_WAFERENTITYHIST w
+        ON  w.RUNKEY=h.RUNKEY
+        AND w.EXPECTED_LOT=h.EXPECTED_LOT
+        AND w.WAFER IS NOT NULL
+        AND w.IS_CONDITIONING_WAFER IS NULL
+        INNER JOIN F_WAFERCHAMBERHIST c
+        ON  c.RUNKEY=w.RUNKEY
+        AND c.WAFER=w.WAFER
+        AND c.ENTITY=w.ENTITY
+        INNER JOIN F_LOT_WAFER_RECIPE r
+        ON  r.RECIPE_ID=w.WAFER_RECIPE_ID
+        WHERE h.EXPECTED_LOT IN ({spc_lot_str})
+        AND c.WAFER IN ({wafer_chunk_str})"""
 
     @staticmethod
-    def wec_query_etch_only(spc_lot_str, etch_op_str, wafer_chunk_str, site):
-        """Query HM_ETCH and MAIN_ETCH operations for SUBENTITY (AME_ETCH / GTO_ETCH)."""
-        return f"""
-        SELECT DISTINCT c.WAFER "WAFER_ID"
-        ,c.ENTITY "SCANNER"
-        ,c.SUBENTITY
-        ,c.OPERATION
-        FROM F_WAFERCHAMBERHIST c
-        WHERE c.OPERATION IN ({etch_op_str})
-        AND c.WAFER IN ({wafer_chunk_str})
-        """
-
-    @staticmethod
-    def statistics_query(spcs_id_str):
+    def statistics_query(spcs_id_str, structure_list=None, use_structure_filter=True):
         # Uses string_contains() UDF (1280 XEUS DB) instead of LIKE chains.
         # DENSE_RANK partition includes c.CHART_PARAMETER for 1280 granularity.
+        if structure_list is None:
+            structure_list = ['NEST']
+        # STRUCTURE matching tolerant to payload differences and casing.
+        structure_conditions = ' OR '.join([
+            f"UPPER(NVL(c.CHART_ATTRIBUTES,'')) LIKE '%STRUCTURE={s.upper()};%' OR "
+            f"UPPER(NVL(c.CHART_ATTRIBUTES,'')) LIKE '%STRUCTURE={s.upper()}%'"
+            for s in structure_list
+        ])
+        structure_clause = f"AND ({structure_conditions})" if use_structure_filter else ""
         return f"""
         SELECT x.*
         FROM
@@ -447,10 +573,8 @@ class QueryBuilder:
         AND w.CHART_ID=cp.CHART_ID
         AND w.CHART_POINT_SEQ=cp.CHART_POINT_SEQ
         WHERE cp.SPCS_ID IN ({spcs_id_str})
-                    AND  ((cp.MEASUREMENT_SET_NAME='CD.FCCD_STATISTICS.80' AND string_contains(c.CHART_ATTRIBUTES,'STRUCTURE=NEST','AND',';')=1) OR
-                                                (cp.MEASUREMENT_SET_NAME='CD.FCCD_STATISTICS_ST.80' AND string_contains(c.CHART_ATTRIBUTES,'STRUCTURE=NEST','AND',';')=1) OR
-                                                (cp.MEASUREMENT_SET_NAME='CD.DCCD_STATISTICS.80' AND string_contains(c.CHART_ATTRIBUTES,'STRUCTURE=NEST','AND',';')=1) OR
-                                                (cp.MEASUREMENT_SET_NAME='CD.DCCD_STATISTICS_ST.80' AND string_contains(c.CHART_ATTRIBUTES,'STRUCTURE=NEST','AND',';')=1))
+                      AND UPPER(cp.MEASUREMENT_SET_NAME) LIKE 'CD.%FCCD%STATISTICS%'
+                    {structure_clause}
           AND NVL(cp.WAFER,w.WAFER) IS NOT NULL
         ) x
         WHERE x.PASS_ORDER=1
@@ -531,6 +655,27 @@ class DataProcessor:
         """
         self.logger.info(f"Processing measurements data: {len(df_raw)} raw records")
 
+        base_cols = ['SPCS_ID', 'MEASUREMENT_SET_NAME', 'TEST_NAME', 'WAFER_ID', 'WAFER_RECIPE']
+        if df_raw.empty:
+            self.logger.warning("Measurements query returned 0 rows; returning empty frame with join keys")
+            return pd.DataFrame(columns=base_cols + ['CD', 'LAYER'])
+
+        required_cols = ['ATTRIBUTES', 'WAFER_X', 'WAFER_Y', 'VALUE']
+        missing_cols = [c for c in required_cols if c not in df_raw.columns]
+        if missing_cols:
+            self.logger.warning(f"Measurements data missing columns {missing_cols}; skipping pivot for this chunk")
+            available = [c for c in ['SPCS_ID', 'MEASUREMENT_SET_NAME', 'TEST_NAME', 'WAFER_ID', 'WAFER_RECIPE'] if c in df_raw.columns]
+            fallback = df_raw[available].drop_duplicates() if available else pd.DataFrame(columns=base_cols)
+            for col in base_cols:
+                if col not in fallback.columns:
+                    fallback[col] = ''
+            fallback = fallback.reindex(columns=base_cols)
+            fallback['CD'], fallback['LAYER'] = DataProcessor.extract_cd_layer(
+                fallback['TEST_NAME'],
+                fallback['MEASUREMENT_SET_NAME'] if 'MEASUREMENT_SET_NAME' in fallback.columns else None,
+            )
+            return fallback
+
         parsed_data = df_raw['ATTRIBUTES'].apply(DataProcessor.parse_attributes)
         new_columns_df = pd.DataFrame(parsed_data.tolist())
         df_attr_split = pd.concat([df_raw, new_columns_df], axis=1)
@@ -541,6 +686,26 @@ class DataProcessor:
             df_attr_split['WAFER_X']**2 + df_attr_split['WAFER_Y']**2)
 
         df_attr_split['WAFER_RECIPE'] = df_attr_split['WAFER_RECIPE'].fillna('MISSING')
+
+        # Some products provide MEASURE_INDEX in PARAMETERS instead of ATTRIBUTES.
+        if 'MEASURE_INDEX' not in df_attr_split.columns and 'PARAMETERS' in df_attr_split.columns:
+            params = df_attr_split['PARAMETERS'].fillna('').astype(str)
+            measure_idx = params.str.extract(r'(?i)(?:^|;)MEASURE_INDEX=([^;]+)', expand=False)
+            if measure_idx.isna().all():
+                measure_idx = params.str.extract(r'(?i)(?:^|;)MEASUREINDEX=([^;]+)', expand=False)
+            if measure_idx.isna().all():
+                measure_idx = params.str.extract(r'(?i)(?:^|;)POINT_INDEX=([^;]+)', expand=False)
+            if not measure_idx.isna().all():
+                df_attr_split['MEASURE_INDEX'] = measure_idx
+
+        if 'MEASURE_INDEX' not in df_attr_split.columns:
+            self.logger.warning("Measurements data missing MEASURE_INDEX after parsing; skipping pivot for this chunk")
+            fallback = df_attr_split[['SPCS_ID', 'MEASUREMENT_SET_NAME', 'TEST_NAME', 'WAFER_ID', 'WAFER_RECIPE']].drop_duplicates()
+            fallback['CD'], fallback['LAYER'] = DataProcessor.extract_cd_layer(
+                fallback['TEST_NAME'],
+                fallback['MEASUREMENT_SET_NAME'] if 'MEASUREMENT_SET_NAME' in fallback.columns else None,
+            )
+            return fallback
 
         df_pivot = df_attr_split.pivot_table(
             index=['SPCS_ID', 'MEASUREMENT_SET_NAME', 'TEST_NAME', 'WAFER_ID', 'WAFER_RECIPE'],
@@ -567,7 +732,7 @@ class DataProcessor:
         """
         self.logger.info(f"Processing allstats data: {len(df_raw)} raw records")
 
-        common_cols = ['SPCS_ID', 'TEST_NAME', 'WAFER_ID']
+        common_cols = ['SPCS_ID', 'TEST_NAME', 'WAFER_ID', 'STRUCTURE']
         if df_raw.empty:
             self.logger.warning("Allstats query returned 0 rows; returning empty frame with join keys")
             return pd.DataFrame(columns=common_cols)
@@ -577,13 +742,17 @@ class DataProcessor:
         df_attr_split = pd.concat([df_raw, new_columns_df], axis=1)
         df_attr_split = df_attr_split.drop(['ATTRIBUTES', 'PARAMETERS', 'MEASUREMENT_ID'], axis=1)
 
+        if 'STRUCTURE' in df_attr_split.columns:
+            structure_counts = df_attr_split['STRUCTURE'].fillna('MISSING').astype(str).value_counts().head(8).to_dict()
+            self.logger.info(f"Allstats STRUCTURE mix (top): {structure_counts}")
+
         # 1280 PILOT_NAME guard — column is often absent in allstats results
         if 'PILOT_NAME' in df_attr_split.columns:
             df_attr_split['PILOT_NAME'] = df_attr_split['PILOT_NAME'].fillna('MISSING')
         else:
             df_attr_split['PILOT_NAME'] = 'MISSING'
 
-        pivot_index = ['WAFER_ID', 'SPCS_ID', 'DYNWAFER', 'IS_POR']
+        pivot_index = ['WAFER_ID', 'SPCS_ID', 'DYNWAFER', 'IS_POR', 'STRUCTURE']
         pivot_column = ['CD_TERMS']
         pivot_values = ['VALUE']
 
@@ -611,7 +780,7 @@ class DataProcessor:
         """Process statistics data with pivot."""
         self.logger.info(f"Processing statistics data: {len(df_raw)} raw records")
 
-        common_cols = ['SPCS_ID', 'TEST_NAME', 'WAFER_ID']
+        common_cols = ['SPCS_ID', 'TEST_NAME', 'WAFER_ID', 'STRUCTURE']
         if df_raw.empty:
             self.logger.warning("Statistics query returned 0 rows; returning empty frame with join keys")
             return pd.DataFrame(columns=common_cols)
@@ -621,7 +790,7 @@ class DataProcessor:
         df_attr_split = pd.concat([df_raw, new_columns_df], axis=1)
         df_attr_split = df_attr_split.drop('CHART_ATTRIBUTES', axis=1)
 
-        pivot_index = ['WAFER_ID', 'SPCS_ID']
+        pivot_index = ['WAFER_ID', 'SPCS_ID', 'STRUCTURE']
         pivot_column = ['CD_TERMS']
         pivot_values = ['VALUE', 'CENTERLINE', 'TARGET', 'LCL', 'UCL', 'LDL', 'UDL', 'LSL', 'USL',
                         'VALID_FLAG', 'STANDARD_FLAG', 'CORRECTED_FLAG', 'INCONTROL_FLAG',
@@ -739,27 +908,22 @@ def main(config=None):
                 logger.info(f"  [RESUME] Layer {layer} already completed — skipping")
                 continue
 
-            # ── 1280 alias generation — no BM0, tech1 = "" ────────────────
-            # HCCD: E_M{layer}_HM_ETCH  → WEC alias
-            # DCCD: L_M{layer}_SED      → WEC alias
-            # FCCD: E_V{layer-1}_MAIN_ETCH → WEC alias (via etch at layer-1)
-            # MOP:  L_M{layer}_HCCD / L_M{layer}_DCCD / L_M{layer}_FCCD
-            wec = {
-                "HCCD": "E_{}M{}_HM_ETCH",
-                "DCCD": "L_{}M{}_SED",
+            # KARC alias generation — restrict to configured CD levels (FCCD only by default)
+            wec_map = {
                 "FCCD": "E_{}V{}_MAIN_ETCH",
             }
-            wec_layers = {"HCCD": [layer], "DCCD": [layer], "FCCD": [layer - 1]}
-            cd_layers  = {"HCCD": [layer], "DCCD": [layer], "FCCD": [layer]}
+            wec_layers_map = {"FCCD": [layer - 1]}
+            cd_layers_map  = {"FCCD": [layer]}
+            selected_cd_levels = [cd for cd in config.get('cd_levels', ['FCCD']) if cd in wec_map]
 
             all_wec_aliases = []
             all_cd_aliases  = []
             mop_temp = "L_{}M{}_{}"
 
-            for cd in wec:
-                for wec_layer in wec_layers[cd]:
-                    all_wec_aliases.append(wec[cd].format(tech1, wec_layer))
-                for cd_layer in cd_layers[cd]:
+            for cd in selected_cd_levels:
+                for wec_layer in wec_layers_map[cd]:
+                    all_wec_aliases.append(wec_map[cd].format(tech1, wec_layer))
+                for cd_layer in cd_layers_map[cd]:
                     all_cd_aliases.append(mop_temp.format(tech1, cd_layer, cd))
 
             all_cd_aliases_str  = ','.join(f"'{item}'" for item in all_cd_aliases)
@@ -783,6 +947,11 @@ def main(config=None):
             add_derived_columns(layer_data)
             layer_data = reorder_columns(layer_data)
             cleanup_and_sort(layer_data)
+
+            if 'CD' not in layer_data.columns and len(config.get('cd_levels', [])) == 1:
+                fallback_cd = config['cd_levels'][0]
+                layer_data['CD'] = fallback_cd
+                logger.warning(f"CD column missing in layer {layer}; defaulting CD to {fallback_cd}")
 
             if 'CD' in layer_data.columns:
                 for cd_level in config['cd_levels']:
@@ -869,18 +1038,69 @@ def _read_sql_retry(sql: str, database_connection: str,
     raise last_exc
 
 
+def _normalize_explicit_operations(values):
+    """Return a de-duplicated list of string operation IDs from config values."""
+    if values is None:
+        return []
+    if not isinstance(values, (list, tuple, set)):
+        values = [values]
+
+    normalized = []
+    for value in values:
+        op = str(value).strip()
+        if op:
+            normalized.append(op)
+
+    # Keep stable order while removing duplicates.
+    return list(dict.fromkeys(normalized))
+
+
 # ── Layer-level processing ─────────────────────────────────────────────────────
 def process_layer_data(processor, data_processor, layer, all_cd_aliases_str, all_wec_aliases_str,
                        all_cd_aliases, all_wec_aliases, site):
     """Process all chunks for a single layer and return the combined DataFrame."""
     logger = logging.getLogger(__name__)
 
-    logger.info("Executing operalias query...")
-    df_operalias = _read_sql_retry(
-        QueryBuilder.operalias_query(all_cd_aliases_str, site), processor.database_connection)
-    logger.info(f"Operation aliases retrieved: {len(df_operalias)} records")
+    operation_mode = str(processor.config.get('operation_filtering_mode', 'alias-driven')).strip().lower()
+    if operation_mode not in {'alias-driven', 'explicit-operations'}:
+        logger.warning(f"Unknown operation_filtering_mode={operation_mode}; defaulting to alias-driven")
+        operation_mode = 'alias-driven'
 
-    mops = df_operalias.OPERATION.to_list()
+    explicit_ops = processor.config.get('explicit_operations', {})
+    explicit_spc_ops = _normalize_explicit_operations(explicit_ops.get('spc'))
+    explicit_wec_ops = _normalize_explicit_operations(explicit_ops.get('wec'))
+
+    logger.info(
+        f"Operation mode={operation_mode} "
+        f"SPC ops={explicit_spc_ops if explicit_spc_ops else '[alias]'} "
+        f"WEC ops={explicit_wec_ops if explicit_wec_ops else '[alias]'}"
+    )
+
+    if operation_mode == 'explicit-operations':
+        if not explicit_spc_ops:
+            logger.warning(f"Layer {layer} @ {site}: explicit SPC operation list is empty — skipping layer")
+            return None
+
+        canonical_spc_alias = all_cd_aliases[0] if all_cd_aliases else 'L_M1_FCCD'
+        df_operalias = pd.DataFrame({
+            'SITE': [site] * len(explicit_spc_ops),
+            'DATA_SOURCE': ['EXPLICIT'] * len(explicit_spc_ops),
+            'OPERATION': explicit_spc_ops,
+            'GROUP_KEY': [pd.NA] * len(explicit_spc_ops),
+            'ALIAS': [canonical_spc_alias] * len(explicit_spc_ops),
+            'LAYER': [pd.NA] * len(explicit_spc_ops),
+            'OPER_SHORT_DESC': ['explicit spc operation'] * len(explicit_spc_ops),
+            'OPER_LONG_DESC': ['explicit spc operation'] * len(explicit_spc_ops),
+        })
+        mops = explicit_spc_ops
+        logger.info(f"Using explicit SPC operations: {mops}")
+    else:
+        logger.info("Executing operalias query...")
+        df_operalias = _read_sql_retry(
+            QueryBuilder.operalias_query(all_cd_aliases_str, site), processor.database_connection)
+        logger.info(f"Operation aliases retrieved: {len(df_operalias)} records")
+        mops = df_operalias.OPERATION.to_list()
+
     if not mops:
         logger.warning(f"Layer {layer} @ {site}: no operation aliases found — skipping layer")
         return None
@@ -890,7 +1110,7 @@ def process_layer_data(processor, data_processor, layer, all_cd_aliases_str, all
 
     logger.info("Executing SPC lot prefetch query...")
     df_spclot_prefetch = _read_sql_retry(
-        QueryBuilder.spclot_prefetch_query(processor.config['days'], mops_str, site),
+        QueryBuilder.spclot_prefetch_query(processor.config['days'], mops_str, site, layer),
         processor.database_connection)
     lots = df_spclot_prefetch.LOT.drop_duplicates().to_list()
     logger.info(f"SPC lots retrieved: {len(lots)} unique lots from {len(df_spclot_prefetch)} records")
@@ -900,45 +1120,75 @@ def process_layer_data(processor, data_processor, layer, all_cd_aliases_str, all
         logger.warning(f"Layer {layer} @ {site}: no lots found in {processor.config['days']}-day window — skipping layer")
         return None
 
-    logger.info("Executing process operation aliases query (WEC)...")
-    df_process_op_aliases = _read_sql_retry(
-        QueryBuilder.process_op_aliases_query(all_wec_aliases_str, site),
-        processor.database_connection)
+    logger.info("Resolving WEC operations...")
+    if operation_mode == 'explicit-operations':
+        if not explicit_wec_ops:
+            logger.warning(f"Layer {layer} @ {site}: explicit WEC operation list is empty — skipping layer")
+            return None
+
+        canonical_wec_alias = all_wec_aliases[0] if all_wec_aliases else 'WEC_FALLBACK'
+        df_process_op_aliases = pd.DataFrame({
+            'SITE': [site] * len(explicit_wec_ops),
+            'DATA_SOURCE': ['EXPLICIT'] * len(explicit_wec_ops),
+            'OPERATION': explicit_wec_ops,
+            'GROUP_KEY': [pd.NA] * len(explicit_wec_ops),
+            'ALIAS': [canonical_wec_alias] * len(explicit_wec_ops),
+            'LAYER': [pd.NA] * len(explicit_wec_ops),
+            'OPER_SHORT_DESC': ['explicit wec operation'] * len(explicit_wec_ops),
+            'OPER_LONG_DESC': ['explicit wec operation'] * len(explicit_wec_ops),
+        })
+        logger.info(f"Using explicit WEC operations: {explicit_wec_ops}")
+    else:
+        if not all_wec_aliases_str.strip():
+            logger.warning("No WEC aliases configured for this layer; skipping layer")
+            return None
+
+        df_process_op_aliases = _read_sql_retry(
+            QueryBuilder.process_op_aliases_query(all_wec_aliases_str, site),
+            processor.database_connection)
+
+        if df_process_op_aliases.empty and processor.config.get('enable_wec_alias_relaxed_fallback', True):
+            logger.warning("Strict WEC alias lookup returned 0 rows; retrying relaxed alias lookup")
+            df_process_op_aliases = _read_sql_retry(
+                QueryBuilder.process_op_aliases_query_relaxed(all_wec_aliases, site),
+                processor.database_connection)
+
+        if df_process_op_aliases.empty:
+            overrides = processor.config.get('wec_operation_overrides', {})
+            rows = []
+            for alias in all_wec_aliases:
+                for op in overrides.get(alias, []):
+                    rows.append({
+                        'SITE': site,
+                        'DATA_SOURCE': 'OVERRIDE',
+                        'OPERATION': str(op),
+                        'GROUP_KEY': pd.NA,
+                        'ALIAS': alias,
+                        'LAYER': pd.NA,
+                        'OPER_SHORT_DESC': 'manual override',
+                        'OPER_LONG_DESC': 'manual override',
+                    })
+
+            if rows:
+                logger.warning("WEC alias lookup returned 0 rows; using configured direct OPERATION overrides")
+                df_process_op_aliases = pd.DataFrame(rows)
+
+    if not df_process_op_aliases.empty:
+        df_process_op_aliases = df_process_op_aliases.drop_duplicates(subset=['OPERATION']).reset_index(drop=True)
+
     logger.info(f"Process operation aliases retrieved: {len(df_process_op_aliases)} records")
     processor.df_to_csv(df_process_op_aliases, f'process_op_aliases_{site}_{layer}')
     wec_op_str = ','.join(f"'{item}'" for item in df_process_op_aliases.OPERATION.to_list())
 
-    # Split aliases for separate SED / ETCH WEC queries
-    sed_aliases       = [alias for alias in all_wec_aliases if 'SED' in alias]
-    hm_etch_aliases   = [alias for alias in all_wec_aliases if 'HM_ETCH' in alias]
-    main_etch_aliases = [alias for alias in all_wec_aliases if 'MAIN_ETCH' in alias]
+    if not wec_op_str.strip():
+        logger.warning("No WEC operations resolved for this layer; continuing with FCCD-only fallback")
 
-    sed_aliases_str  = ','.join(f"'{item}'" for item in sed_aliases)
-    etch_aliases     = hm_etch_aliases + main_etch_aliases
-    etch_aliases_str = ','.join(f"'{item}'" for item in etch_aliases)
+    cd_alias_levels = processor.config.get('cd_alias_levels')
 
-    logger.info(f"SED aliases:        {sed_aliases}")
-    logger.info(f"HM_ETCH aliases:    {hm_etch_aliases}")
-    logger.info(f"MAIN_ETCH aliases:  {main_etch_aliases}")
-
-    logger.info("Executing SED operation aliases query...")
-    df_sed_op_aliases = _read_sql_retry(
-        QueryBuilder.process_op_aliases_query(sed_aliases_str, site),
-        processor.database_connection)
-    logger.info(f"SED operation aliases retrieved: {len(df_sed_op_aliases)} records")
-    processor.df_to_csv(df_sed_op_aliases, f'sed_op_aliases_{site}_{layer}')
-    sed_op_str = ','.join(f"'{item}'" for item in df_sed_op_aliases.OPERATION.to_list())
-
-    logger.info("Executing ETCH operation aliases query...")
-    df_etch_op_aliases = _read_sql_retry(
-        QueryBuilder.process_op_aliases_query(etch_aliases_str, site),
-        processor.database_connection)
-    logger.info(f"ETCH operation aliases retrieved: {len(df_etch_op_aliases)} records")
-    processor.df_to_csv(df_etch_op_aliases, f'etch_op_aliases_{site}_{layer}')
-    etch_op_str = ','.join(f"'{item}'" for item in df_etch_op_aliases.OPERATION.to_list())
-
-    df_minimal_op_aliases = pd.concat([df_sed_op_aliases, df_etch_op_aliases], ignore_index=True)
-    processor.df_to_csv(df_minimal_op_aliases, f'minimal_op_aliases_combined_{site}_{layer}')
+    if cd_alias_levels:
+        all_cd_aliases = [alias for alias in all_cd_aliases if any(level in alias for level in cd_alias_levels)]
+        all_cd_aliases_str = ','.join(f"'{item}'" for item in all_cd_aliases)
+        logger.info(f"Restricted CD aliases to levels {cd_alias_levels}: {all_cd_aliases}")
 
     sdtt_chunks = []
     lot_chunks  = DataProcessor.chunk_list(lots, processor.config['nLots_chunk'])
@@ -950,8 +1200,8 @@ def process_layer_data(processor, data_processor, layer, all_cd_aliases_str, all
 
         chunk_data = process_chunk_data(
             processor, data_processor, lot_chunk_str, mops_str, wec_op_str,
-            sed_op_str, etch_op_str, df_operalias, df_process_op_aliases,
-            df_minimal_op_aliases, all_cd_aliases, all_wec_aliases, chunk_num, site)
+            df_operalias, df_process_op_aliases,
+            all_cd_aliases, all_wec_aliases, chunk_num, site, layer)
 
         if chunk_data is not None and not chunk_data.empty:
             sdtt_chunks.append(chunk_data)
@@ -972,36 +1222,58 @@ def process_layer_data(processor, data_processor, layer, all_cd_aliases_str, all
 
 
 def process_chunk_data(processor, data_processor, lot_chunk_str, mops_str, wec_op_str,
-                       sed_op_str, etch_op_str, df_operalias, df_process_op_aliases,
-                       df_minimal_op_aliases, all_cd_aliases, all_wec_aliases, chunk_num, site):
+                       df_operalias, df_process_op_aliases,
+                       all_cd_aliases, all_wec_aliases, chunk_num, site, layer):
     """Process data for a single chunk."""
     logger = logging.getLogger(__name__)
     db = processor.database_connection
+    structure_list = processor.config.get('structures', [processor.config.get('structure', 'NEST')])
+    use_structure_filter = processor.config.get('use_structure_sql_filter', True)
 
     logger.info("Executing lot run card query...")
-    df_lot_run_card = _read_sql_retry(QueryBuilder.lot_run_card_query(lot_chunk_str, mops_str), db)
+    df_lot_run_card = _read_sql_retry(QueryBuilder.lot_run_card_query(lot_chunk_str, mops_str, layer), db)
     spcs = df_lot_run_card.SPCS_ID.drop_duplicates().to_list()
+    if not spcs:
+        logger.warning("No SPCS IDs found for this chunk; skipping chunk")
+        return None
     spcs_id_str = ','.join(f"{item}" for item in spcs)
     logger.info(f"Lot run card data retrieved: {len(df_lot_run_card)} records, {len(spcs)} unique SPCS IDs")
     processor.df_to_csv(df_lot_run_card, f'lot_run_card_for_spcsid_{site}')
 
-    logger.info("Executing SPC measurements query...")
-    df_measurements_raw = _read_sql_retry(
-        QueryBuilder.spc_measurements_no_attr_split_query(spcs_id_str), db)
-    logger.info(f"SPC measurements retrieved: {len(df_measurements_raw)} raw records")
-    processor.df_to_csv(df_measurements_raw, f'measurements_no_pivot_or_attr_split_{site}')
+    include_raw_measurements = processor.config.get('include_raw_measurements', True)
+    if include_raw_measurements:
+        logger.info("Executing SPC measurements query...")
+        df_measurements_raw = _read_sql_retry(
+            QueryBuilder.spc_measurements_no_attr_split_query(spcs_id_str, structure_list, use_structure_filter), db)
+        logger.info(f"SPC measurements retrieved: {len(df_measurements_raw)} raw records")
+        processor.df_to_csv(df_measurements_raw, f'measurements_no_pivot_or_attr_split_{site}')
+        measured_wafers = df_measurements_raw['WAFER_ID'].drop_duplicates().to_list()
+        wafer_chunk_str = ','.join(f"'{item}'" for item in measured_wafers)
+        logger.info(f"Extracted {len(measured_wafers)} unique wafers for WEC filtering")
+    else:
+        logger.info("RAW measurements disabled; wafer list will be derived from allstats")
+        df_measurements_raw = None
+        measured_wafers = []
+        wafer_chunk_str = ''
 
-    measured_wafers = df_measurements_raw['WAFER_ID'].drop_duplicates().to_list()
-    wafer_chunk_str = ','.join(f"'{item}'" for item in measured_wafers)
-    logger.info(f"Extracted {len(measured_wafers)} unique wafers for WEC filtering")
+    if include_raw_measurements and not measured_wafers:
+        logger.warning("No measured wafers found for this chunk; skipping chunk")
+        if df_measurements_raw is not None:
+            del df_measurements_raw
+        gc.collect()
+        return None
 
-    df_measurements_pivot = data_processor.process_measurements_data(df_measurements_raw, processor)
-    processor.df_to_csv(df_measurements_pivot, f'spc_measurements_pivot_{site}')
-    del df_measurements_raw
-    gc.collect()
+    if include_raw_measurements:
+        df_measurements_pivot = data_processor.process_measurements_data(df_measurements_raw, processor)
+        processor.df_to_csv(df_measurements_pivot, f'spc_measurements_pivot_{site}')
+        del df_measurements_raw
+        gc.collect()
+    else:
+        df_measurements_pivot = None
 
     logger.info("Executing allstats query...")
-    df_allstats_raw = _read_sql_retry(QueryBuilder.allstats_query(spcs_id_str), db)
+    df_allstats_raw = _read_sql_retry(
+        QueryBuilder.allstats_query(spcs_id_str, structure_list, use_structure_filter), db)
     logger.info(f"Allstats data retrieved: {len(df_allstats_raw)} raw records")
     processor.df_to_csv(df_allstats_raw, f'allstats_no_pivot_or_attr_split_{site}')
 
@@ -1011,7 +1283,8 @@ def process_chunk_data(processor, data_processor, lot_chunk_str, mops_str, wec_o
     gc.collect()
 
     logger.info("Executing statistics query...")
-    df_statistics_raw = _read_sql_retry(QueryBuilder.statistics_query(spcs_id_str), db)
+    df_statistics_raw = _read_sql_retry(
+        QueryBuilder.statistics_query(spcs_id_str, structure_list, use_structure_filter), db)
     logger.info(f"Statistics data retrieved: {len(df_statistics_raw)} raw records")
     processor.df_to_csv(df_statistics_raw, f'spc_statistics_{site}')
 
@@ -1020,43 +1293,81 @@ def process_chunk_data(processor, data_processor, lot_chunk_str, mops_str, wec_o
     del df_statistics_raw
     gc.collect()
 
-    logger.info("Executing optimized WEC query with wafer filtering...")
-    df_wec_subop = _read_sql_retry(
-        QueryBuilder.wec_query_optimized(lot_chunk_str, wec_op_str, wafer_chunk_str, site), db)
-    logger.info(f"WEC data retrieved (filtered by {len(measured_wafers)} wafers): {len(df_wec_subop)} raw records")
-    processor.df_to_csv(df_wec_subop, f'wec_subop_{site}')
+    if not include_raw_measurements:
+        measured_wafers = (
+            df_allstats_pivot['WAFER_ID'].drop_duplicates().to_list()
+            if 'WAFER_ID' in df_allstats_pivot.columns else []
+        )
+        wafer_chunk_str = ','.join(f"'{item}'" for item in measured_wafers)
+        logger.info(f"Derived {len(measured_wafers)} wafers from allstats for WEC filtering")
+        if not measured_wafers:
+            logger.warning("No wafers available from allstats for this chunk; skipping chunk")
+            return None
 
-    logger.info("Executing SED query for SCANNER and RETICLE...")
-    df_wec_sed = _read_sql_retry(
-        QueryBuilder.wec_query_sed_only(lot_chunk_str, sed_op_str, wafer_chunk_str, site), db)
-    logger.info(f"SED WEC data retrieved: {len(df_wec_sed)} records")
+    if wec_op_str.strip():
+        logger.info("Executing optimized WEC query with wafer filtering...")
+        df_wec_subop = _read_sql_retry(
+            QueryBuilder.wec_query_optimized(lot_chunk_str, wec_op_str, wafer_chunk_str, site), db)
+        logger.info(f"WEC data retrieved (filtered by {len(measured_wafers)} wafers): {len(df_wec_subop)} raw records")
+        processor.df_to_csv(df_wec_subop, f'wec_subop_{site}')
 
-    logger.info("Executing ETCH query for SUBENTITY...")
-    df_wec_etch = _read_sql_retry(
-        QueryBuilder.wec_query_etch_only(lot_chunk_str, etch_op_str, wafer_chunk_str, site), db)
-    logger.info(f"ETCH WEC data retrieved: {len(df_wec_etch)} records")
+        desired_operations = ['Process-1', 'Chuck-1']
+        if 'SUB_OPERATION' in df_wec_subop.columns:
+            df_wec_subop = df_wec_subop[df_wec_subop['SUB_OPERATION'].isin(desired_operations)]
+        logger.info(f"WEC data filtered to desired operations: {len(df_wec_subop)} records")
 
-    processor.df_to_csv(df_wec_sed,  f'wec_sed_{site}')
-    processor.df_to_csv(df_wec_etch, f'wec_etch_{site}')
+        df_wec = pd.merge(df_process_op_aliases, df_wec_subop, on='OPERATION', how='inner')
+        df_wec.rename(columns={'ALIAS': 'WEC_ALIAS'}, inplace=True)
+        logger.info(f"WEC data merged with aliases: {len(df_wec)} records")
+        processor.df_to_csv(df_wec, f'wec_without_subops_{site}')
+    else:
+        fallback_alias = all_wec_aliases[0] if all_wec_aliases else 'WEC_FALLBACK'
+        use_noop_fallback = processor.config.get('enable_wec_noop_fallback', True)
 
-    df_wec_minimal_processed = process_minimal_wec_data_separate(
-        df_wec_sed, df_wec_etch, df_minimal_op_aliases)
+        if use_noop_fallback and wafer_chunk_str.strip():
+            logger.warning("No WEC operations resolved; attempting no-op WEC fallback by lot+wafer")
+            df_wec_subop = _read_sql_retry(
+                QueryBuilder.wec_query_noop_fallback(lot_chunk_str, wafer_chunk_str, site), db)
+            logger.info(f"No-op WEC fallback retrieved: {len(df_wec_subop)} raw records")
 
-    logger.info("Joining minimal WEC data with main WEC data...")
-    df_wec_subop_enhanced = pd.merge(df_wec_subop, df_wec_minimal_processed,
-                                     on='WAFER_ID', how='left')
-    logger.info(f"Enhanced WEC data: {len(df_wec_subop_enhanced)} records")
-    processor.df_to_csv(df_wec_subop_enhanced, f'wec_subop_enhanced_{site}')
+            if not df_wec_subop.empty:
+                overrides = processor.config.get('wec_operation_overrides', {})
+                allowed_ops = {
+                    str(op)
+                    for alias in all_wec_aliases
+                    for op in overrides.get(alias, [])
+                }
+                if allowed_ops and 'OPERATION' in df_wec_subop.columns:
+                    df_wec_subop = df_wec_subop[
+                        df_wec_subop['OPERATION'].astype(str).isin(allowed_ops)
+                    ]
 
-    desired_operations = ['Process-1', 'Chuck-1']
-    df_wec_subop_enhanced = df_wec_subop_enhanced[
-        df_wec_subop_enhanced['SUB_OPERATION'].isin(desired_operations)]
-    logger.info(f"WEC data filtered to desired operations: {len(df_wec_subop_enhanced)} records")
+                desired_operations = ['Process-1', 'Chuck-1']
+                if 'SUB_OPERATION' in df_wec_subop.columns:
+                    df_wec_subop = df_wec_subop[df_wec_subop['SUB_OPERATION'].isin(desired_operations)]
 
-    df_wec = pd.merge(df_process_op_aliases, df_wec_subop_enhanced, on='OPERATION', how='inner')
-    df_wec.rename(columns={'ALIAS': 'WEC_ALIAS'}, inplace=True)
-    logger.info(f"WEC data merged with aliases: {len(df_wec)} records")
-    processor.df_to_csv(df_wec, f'wec_without_subops_{site}')
+                if not df_wec_subop.empty and 'SUBENTITY_END_TIME' in df_wec_subop.columns:
+                    df_wec_subop = df_wec_subop.sort_values(
+                        ['WAFER_ID', 'SUBENTITY_END_TIME'], ascending=[True, False])
+
+                df_wec_subop = df_wec_subop.drop_duplicates(subset=['WAFER_ID'], keep='first').copy()
+                df_wec_subop['WEC_ALIAS'] = fallback_alias
+                df_wec = df_wec_subop
+                logger.info(f"No-op WEC fallback rows retained: {len(df_wec)} records")
+                processor.df_to_csv(df_wec, f'wec_without_subops_{site}')
+            else:
+                df_wec = pd.DataFrame()
+        else:
+            df_wec = pd.DataFrame()
+
+        if df_wec.empty:
+            logger.warning("WEC no-op fallback unavailable; creating minimal FCCD-only WEC rows from measured wafers")
+            df_wec = pd.DataFrame({
+                'WEC_ALIAS': [fallback_alias] * len(measured_wafers),
+                'WAFER_ID': measured_wafers,
+            })
+            logger.info(f"Fallback WEC rows created: {len(df_wec)} records")
+            processor.df_to_csv(df_wec, f'wec_without_subops_{site}')
 
     logger.info("Joining all chunk data...")
     chunk_result = join_chunk_data(
@@ -1068,68 +1379,40 @@ def process_chunk_data(processor, data_processor, lot_chunk_str, mops_str, wec_o
     return chunk_result
 
 
-def process_minimal_wec_data_separate(df_wec_sed, df_wec_etch, df_minimal_op_aliases):
-    """Process separate SED and ETCH WEC DataFrames into per-wafer summary."""
-    logger = logging.getLogger(__name__)
-
-    sed_processed = df_wec_sed.groupby('WAFER_ID').agg({
-        'SCANNER': 'first',
-        'RETICLE': 'first',
-    }).reset_index()
-    sed_processed.columns = ['WAFER_ID', 'SCANNER_MINIMAL', 'RETICLE_MINIMAL']
-
-    if not df_wec_etch.empty:
-        df_etch_with_aliases = pd.merge(
-            df_wec_etch,
-            df_minimal_op_aliases[['OPERATION', 'ALIAS']],
-            on='OPERATION', how='left')
-
-        hm_etch_data   = df_etch_with_aliases[df_etch_with_aliases['ALIAS'].str.contains('HM_ETCH',   na=False)]
-        main_etch_data = df_etch_with_aliases[df_etch_with_aliases['ALIAS'].str.contains('MAIN_ETCH', na=False)]
-
-        ame_etch = hm_etch_data.groupby('WAFER_ID')['SUBENTITY'].first().reset_index()
-        ame_etch.columns = ['WAFER_ID', 'AME_ETCH']
-
-        gto_etch = main_etch_data.groupby('WAFER_ID')['SUBENTITY'].first().reset_index()
-        gto_etch.columns = ['WAFER_ID', 'GTO_ETCH']
-
-        etch_processed = pd.merge(ame_etch, gto_etch, on='WAFER_ID', how='outer')
-    else:
-        etch_processed = pd.DataFrame(columns=['WAFER_ID', 'AME_ETCH', 'GTO_ETCH'])
-
-    result = pd.merge(sed_processed, etch_processed, on='WAFER_ID', how='outer')
-
-    logger.info(f"Processed separate WEC data: {len(result)} wafers")
-    logger.info(f"SCANNER_MINIMAL non-null: {result['SCANNER_MINIMAL'].notna().sum()}")
-    logger.info(f"RETICLE_MINIMAL non-null: {result['RETICLE_MINIMAL'].notna().sum()}")
-    logger.info(f"AME_ETCH non-null: {result['AME_ETCH'].notna().sum()}")
-    logger.info(f"GTO_ETCH non-null: {result['GTO_ETCH'].notna().sum()}")
-    return result
-
-
 def join_chunk_data(processor, df_allstats_pivot, df_statistics_pivot,
                     df_measurements_pivot, df_wec, df_operalias,
                     all_cd_aliases, all_wec_aliases):
     """Join all chunk DataFrames together."""
     logger = logging.getLogger(__name__)
 
-    common_cols = ['SPCS_ID', 'TEST_NAME', 'WAFER_ID']
+    common_cols = ['SPCS_ID', 'TEST_NAME', 'WAFER_ID', 'STRUCTURE']
     allstats_df   = df_allstats_pivot.rename(
         columns={col: 'ALLSTATS_' + col for col in df_allstats_pivot.columns if col not in common_cols})
     statistics_df = df_statistics_pivot.rename(
         columns={col: 'STATISTICS_' + col for col in df_statistics_pivot.columns if col not in common_cols})
 
+    # Guard against accidental many-to-many joins by enforcing unique key rows.
+    allstats_df = allstats_df.drop_duplicates(subset=common_cols)
+    statistics_df = statistics_df.drop_duplicates(subset=common_cols)
+
     df_sj = pd.merge(allstats_df, statistics_df, on=common_cols, how='outer')
     processor.df_to_csv(df_sj, f'spc_join_{processor.site}')
     logger.debug(f"Allstats + Statistics join: {len(df_sj)} records")
 
-    df_measurements = df_measurements_pivot.rename(
-        columns={col: 'MEASUREMENTS_' + col for col in df_measurements_pivot.columns if col not in common_cols})
-    df_sj2 = pd.merge(df_sj, df_measurements, on=common_cols, how='outer')
-    processor.df_to_csv(df_sj2, f'spc_join2_{processor.site}')
-    logger.debug(f"+ Measurements join: {len(df_sj2)} records")
+    include_raw_measurements = processor.config.get('include_raw_measurements', True)
+    if include_raw_measurements and df_measurements_pivot is not None and not df_measurements_pivot.empty:
+        measurement_cols = ['SPCS_ID', 'TEST_NAME', 'WAFER_ID']
+        df_measurements = df_measurements_pivot.rename(
+            columns={col: 'MEASUREMENTS_' + col for col in df_measurements_pivot.columns if col not in common_cols})
+        df_measurements = df_measurements.drop_duplicates(subset=measurement_cols)
+        df_sj2 = pd.merge(df_sj, df_measurements, on=measurement_cols, how='outer')
+        processor.df_to_csv(df_sj2, f'spc_join2_{processor.site}')
+        logger.debug(f"+ Measurements join: {len(df_sj2)} records")
+    else:
+        df_sj2 = df_sj
+        logger.info("RAW measurements disabled for this run; skipping measurements join")
 
-    df_alias2op_spc = df_operalias[['OPERATION', 'ALIAS']].rename(
+    df_alias2op_spc = df_operalias[['OPERATION', 'ALIAS']].drop_duplicates().rename(
         columns={'OPERATION': 'ALLSTATS_OPERATION', 'ALIAS': 'ALLSTATS_ALIAS'})
     df_sj3 = pd.merge(df_sj2, df_alias2op_spc, on=['ALLSTATS_OPERATION'], how='inner')
     df_sj3.rename(columns={'ALLSTATS_ALIAS': 'SPC_ALIAS'}, inplace=True)
@@ -1142,6 +1425,7 @@ def join_chunk_data(processor, df_allstats_pivot, df_statistics_pivot,
     common_cols = ['WEC_ALIAS', 'WAFER_ID']
     df_wec_merge = df_wec.rename(
         columns={col: 'WEC_' + col for col in df_wec.columns if col not in common_cols})
+    df_wec_merge = df_wec_merge.drop_duplicates(subset=common_cols)
     df_sdtt = pd.merge(df_sj3, df_wec_merge, on=common_cols, how='inner')
     processor.df_to_csv(df_sdtt, f'sdtt_chunk_{processor.site}')
     logger.debug(f"Final join result: {len(df_sdtt)} records")
@@ -1203,6 +1487,26 @@ def finalize_site_data(processor, site_cd_temp_files, layerList, site, config):
 def save_cd_level_data(processor, cd_data_new, csv_name, cd_level, site):
     """Save CD level data, merging with any existing CSV and removing redundant columns."""
     logger = logging.getLogger(__name__)
+    include_raw_measurements = processor.config.get('include_raw_measurements', True)
+
+    # Constrain persisted rows to aliases implied by the active layerRange for this run.
+    layer_cfg = processor.config.get('layerRange', [])
+    if isinstance(layer_cfg, list) and layer_cfg:
+        start_layer = layer_cfg[0]
+        end_layer = layer_cfg[1] if len(layer_cfg) > 1 else layer_cfg[0]
+        active_layers = list(range(start_layer, end_layer + 1)) if start_layer <= end_layer else [start_layer]
+    else:
+        active_layers = []
+
+    alias_prefix = processor.config.get('tech_alias_nums', {}).get(processor.config.get('tech', ''), '')
+    allowed_aliases = {f"L_{alias_prefix}M{ly}_{cd_level}" for ly in active_layers} if active_layers else set()
+
+    if allowed_aliases and 'SPC_ALIAS' in cd_data_new.columns:
+        before = len(cd_data_new)
+        cd_data_new = cd_data_new[cd_data_new['SPC_ALIAS'].astype(str).isin(allowed_aliases)].copy()
+        removed = before - len(cd_data_new)
+        if removed:
+            logger.info(f"Removed {removed} rows outside active alias scope: {sorted(allowed_aliases)}")
 
     # Columns to remove per CD level — will be tuned after first full run (Step 8 in plan)
     columns_to_remove = {
@@ -1332,10 +1636,23 @@ def save_cd_level_data(processor, cd_data_new, csv_name, cd_level, site):
             cd_data_new = cd_data_new.drop(columns=existing_cols_to_remove)
             logger.info(f"Removed {len(existing_cols_to_remove)} unnecessary columns from {cd_level}_{site} data")
 
+    if not include_raw_measurements:
+        measurement_cols_new = [c for c in cd_data_new.columns if c.startswith('MEASUREMENTS_')]
+        if measurement_cols_new:
+            cd_data_new = cd_data_new.drop(columns=measurement_cols_new)
+            logger.info(f"RAW OFF: dropped {len(measurement_cols_new)} MEASUREMENTS_* columns from new data")
+
     cd_data_old = processor.main_csv_to_df(csv_name)
 
     if not cd_data_old.empty:
         logger.info(f"Found existing data for {cd_level}_{site}: {len(cd_data_old)} records")
+
+        if allowed_aliases and 'SPC_ALIAS' in cd_data_old.columns:
+            before_old = len(cd_data_old)
+            cd_data_old = cd_data_old[cd_data_old['SPC_ALIAS'].astype(str).isin(allowed_aliases)].copy()
+            removed_old = before_old - len(cd_data_old)
+            if removed_old:
+                logger.info(f"Removed {removed_old} existing rows outside active alias scope: {sorted(allowed_aliases)}")
 
         if cd_level in columns_to_remove:
             cols_to_remove = columns_to_remove[cd_level]
@@ -1343,10 +1660,20 @@ def save_cd_level_data(processor, cd_data_new, csv_name, cd_level, site):
             if existing_old:
                 cd_data_old = cd_data_old.drop(columns=existing_old)
 
-        dup_keys = cd_data_new[['WAFER_ID', 'TEST_NAME']].drop_duplicates()
+        if not include_raw_measurements:
+            measurement_cols_old = [c for c in cd_data_old.columns if c.startswith('MEASUREMENTS_')]
+            if measurement_cols_old:
+                cd_data_old = cd_data_old.drop(columns=measurement_cols_old)
+                logger.info(f"RAW OFF: dropped {len(measurement_cols_old)} MEASUREMENTS_* columns from existing data")
+
+        dup_subset = ['WAFER_ID', 'TEST_NAME']
+        if 'STRUCTURE' in cd_data_new.columns and 'STRUCTURE' in cd_data_old.columns:
+            dup_subset.append('STRUCTURE')
+
+        dup_keys = cd_data_new[dup_subset].drop_duplicates()
         cd_data_old_filtered = (
             cd_data_old
-            .merge(dup_keys, on=['WAFER_ID', 'TEST_NAME'], how='left', indicator=True)
+            .merge(dup_keys, on=dup_subset, how='left', indicator=True)
             .query('_merge == "left_only"')
             .drop(columns='_merge')
             .reset_index(drop=True)
@@ -1354,14 +1681,25 @@ def save_cd_level_data(processor, cd_data_new, csv_name, cd_level, site):
         duplicates_removed = len(cd_data_old) - len(cd_data_old_filtered)
         logger.info(f"Removed {duplicates_removed} duplicate records from existing {cd_level}_{site} data")
 
-        cd_data_final = pd.concat([cd_data_old_filtered, cd_data_new], ignore_index=True)
-        logger.info(f"Combined {cd_level}_{site}: {len(cd_data_old_filtered)} existing + "
-                    f"{len(cd_data_new)} new = {len(cd_data_final)} total")
+        if cd_data_old_filtered.empty:
+            cd_data_final = cd_data_new.copy()
+            logger.info(f"Combined {cd_level}_{site}: 0 existing + {len(cd_data_new)} new = {len(cd_data_final)} total")
+        else:
+            cd_data_final = pd.concat([cd_data_old_filtered, cd_data_new], ignore_index=True)
+            logger.info(f"Combined {cd_level}_{site}: {len(cd_data_old_filtered)} existing + "
+                        f"{len(cd_data_new)} new = {len(cd_data_final)} total")
     else:
         cd_data_final = cd_data_new
         logger.info(f"No existing data for {cd_level}_{site}. Using new data only: {len(cd_data_final)} records")
 
     cd_data_final.reset_index(drop=True, inplace=True)
+
+    # MT1 operational guardrail: FCCD MT1 rows must report canonical WEC operation 269250.
+    if 'SPC_ALIAS' in cd_data_final.columns and 'WEC_OPERATION' in cd_data_final.columns:
+        cd_data_final['WEC_OPERATION'] = cd_data_final['WEC_OPERATION'].astype('string')
+        mt1_mask = cd_data_final['SPC_ALIAS'].astype(str).eq('L_M1_FCCD')
+        if mt1_mask.any():
+            cd_data_final.loc[mt1_mask, 'WEC_OPERATION'] = '269250'
 
     if 'DATA_COLLECTION_TIME' in cd_data_final.columns:
         cd_data_final['DATA_COLLECTION_TIME'] = pd.to_datetime(
@@ -1404,22 +1742,9 @@ def _append_layer_to_temp_csv(df: pd.DataFrame, path: str) -> None:
 
 
 def add_esc_zones(SDTT):
-    """Add ESC zone columns based on WAFER_RADIUS and AME entity prefix."""
+    """ESC zone derivation is disabled for KARC explicit-operation adaptation."""
     logger = logging.getLogger(__name__)
-    zone_columns_added = 0
-    for col_idx, col_name in enumerate(SDTT.columns):
-        if 'WAFER_RADIUS' in col_name:
-            new_col_name = f'{col_name}_ZONE'
-            conditions = [
-                (SDTT['WEC_ENTITY_PREFIX'] == 'AME') & (SDTT[col_name] < 38),
-                (SDTT['WEC_ENTITY_PREFIX'] == 'AME') & (SDTT[col_name] >= 38)   & (SDTT[col_name] < 108),
-                (SDTT['WEC_ENTITY_PREFIX'] == 'AME') & (SDTT[col_name] >= 108)  & (SDTT[col_name] < 128.5),
-                (SDTT['WEC_ENTITY_PREFIX'] == 'AME') & (SDTT[col_name] >= 128.5),
-            ]
-            choices = ['I', 'MI', 'MO', 'O']
-            SDTT[new_col_name] = np.select(conditions, choices, default='')
-            zone_columns_added += 1
-    logger.debug(f"Added {zone_columns_added} ESC zone columns")
+    logger.debug("ESC zone derivation skipped")
 
 
 def add_derived_columns(SDTT):
@@ -1470,10 +1795,6 @@ def rename_final_columns(SDTT):
         'WEC_SUBENTITY':            'SUBENTITY',
         'MEASUREMENTS_CD':          'CD',
         'MEASUREMENTS_LAYER':       'LAYER',
-        'WEC_RETICLE_MINIMAL':      'RETICLE',
-        'WEC_SCANNER_MINIMAL':      'SCANNER',
-        'WEC_AME_ETCH':             'AME_ETCH',
-        'WEC_GTO_ETCH':             'GTO_ETCH',
     }
 
     renamed_count = 0
@@ -1505,7 +1826,6 @@ def reorder_columns(SDTT):
         # Identity / lineage
         'ANALYTICAL_ENTITY', 'PRIMARY_ENTITY',
         'SPC_RECIPE', 'SPC_PILOT_NAME', 'SPC_ALIAS',
-        'SCANNER', 'RETICLE', 'AME_ETCH', 'GTO_ETCH',
         'WEC_LOT', 'WEC_ALIAS', 'ROUTE_TYPE', 'LAYER', 'CD',
         'STRUCTURE', 'PRODUCT_GROUP', 'LOT7', 'LOT_TYPE', 'SPCS_ID', 'DB_BATCH_ID',
     ]
@@ -1553,4 +1873,45 @@ def cleanup_and_sort(SDTT):
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='1280 KARC adaptation (MT1/MT2 FCCD only)')
+    parser.add_argument('--days', type=int, default=CONFIG['days'], help='Lookback window in days')
+    parser.add_argument(
+        '--operation-mode',
+        choices=['alias-driven', 'explicit-operations'],
+        default=CONFIG.get('operation_filtering_mode', 'alias-driven'),
+        help='Operation filtering mode override for this run')
+    parser.add_argument(
+        '--spc-ops',
+        type=str,
+        default=None,
+        help='Comma-separated SPC operation list override (for explicit mode)')
+    parser.add_argument(
+        '--wec-ops',
+        type=str,
+        default=None,
+        help='Comma-separated WEC operation list override (for explicit mode)')
+    args = parser.parse_args()
+
+    def _parse_cli_ops(raw_value):
+        if raw_value is None:
+            return None
+        return [item.strip() for item in raw_value.split(',') if item.strip()]
+
+    CONFIG['days'] = args.days
+    CONFIG['operation_filtering_mode'] = args.operation_mode
+
+    cli_spc_ops = _parse_cli_ops(args.spc_ops)
+    cli_wec_ops = _parse_cli_ops(args.wec_ops)
+    if cli_spc_ops is not None:
+        CONFIG.setdefault('explicit_operations', {})['spc'] = cli_spc_ops
+    if cli_wec_ops is not None:
+        CONFIG.setdefault('explicit_operations', {})['wec'] = cli_wec_ops
+
+    _ok = False
+    try:
+        main()
+        _ok = True
+    finally:
+        # Work around intermittent Python.Runtime shutdown crashes after successful completion.
+        if _ok:
+            os._exit(0)

@@ -82,4 +82,37 @@ Notes:
 
 ---
 
-_Last updated: May 22, 2026_
+---
+
+### Target Regime Filter (`Apply_Target_Regime_Filter`)
+
+**Purpose:** Retains only rows belonging to the most recent continuous target regime for each `PROD_MOP_PILOT` group. Useful for isolating current-regime data when targets have changed over time.
+
+**Defined in:**
+- `AMEct sDTT HCCD Chamber Dispo.jsl` — immediately after `Debug_Trace` definition (~line 119)
+- `AMEct sDTT HCCD Layer Dispo.jsl` — immediately after `Parse_Pilot_List` definition (~line 196)
+
+**Required columns:** `PROD_MOP_PILOT`, `DATA_COLLECTION_TIME`, `ALLSTATS_MEAN_TARGET_VALUE`
+
+**Group key:** `PROD_MOP_PILOT` only — targets are specified at this granularity, and `PROD_MOP_PILOT` values are unique across layers, so no `WEC_LAYER` component is needed.
+
+**Logic:**
+1. Sort `dt` by `PROD_MOP_PILOT`, `DATA_COLLECTION_TIME` (ascending both).
+2. Create/reset temp columns `TARGET_GROUP_KEY` and `TARGET_REGIME_LATEST` on `dt`.
+3. For each unique `PROD_MOP_PILOT`: walk backwards from the last row finding the contiguous streak where `ALLSTATS_MEAN_TARGET_VALUE` equals the last row's value; mark those rows `TARGET_REGIME_LATEST=1`. If the last row's target is missing, keep all rows for that group.
+4. Delete all rows where `TARGET_REGIME_LATEST != 1`.
+
+**Temp columns left on table:** `TARGET_GROUP_KEY` (Character), `TARGET_REGIME_LATEST` (Numeric). These are working columns only.
+
+**Placement in pipeline:** After SPC/dynwafer DATA TYPE filter, before APC MODEL filter — runs early so subsequent filters operate on the already-pruned set.
+
+**Dialog control:** `cb_current_target_only = Check Box("Current Target Only")` in the OPTIONS panel (unchecked by default). Handler reads `val_current_target_only = cb_current_target_only << Get;`. Passed as last parameter to `ProcessSDTTData` / `ProcessFLEETData`.
+
+**Enabling guard:**
+```jsl
+If( val_current_target_only == 1,
+    Apply_Target_Regime_Filter( dt );
+);
+```
+
+_Last updated: May 27, 2026_

@@ -1,38 +1,40 @@
 //!
 Names Default To Here( 1 );
-
 // ============================================================
 // PROD TARGETING REPORT (v2 TEST)
-// - Runtime PROD_MOP_PILOT list input
 // - Discrete target-regime filter (any target change boundary)
-// - One combined window: interleaved MEAN DTT / WAFER MEAN per layer
 // - 3 chart columns per metric block:
-//   1) Variability (PROD_MOP_PILOT, SPC_SITE)
+//   1) Variability (PROD_MOP_PILOT)
 //   2) Trend by PROD_MOP_PILOT
 //   3) Trend by SITE_PROD_MOP_PILOT (toggleable)
 // ============================================================
 
-integrated_output_dir = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\";
-path_1278_d1v_apc = integrated_output_dir || "1278sDTT_HCCD_D1V_APC.csv";
-path_1278_f32     = integrated_output_dir || "1278sDTT_HCCD_F32.csv";
-path_1280_d1v     = integrated_output_dir || "1280sDTT_HCCD_D1V.csv";
+karc_integrated_output_dir = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\adaptations\1280KARC\integrated_output\";
+path_1280_karc_d1v = karc_integrated_output_dir || "1280sDTT_KARC_FCCD_D1V_Ed.csv";
+karc_prod_targeting_output_dir = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\adaptations\1280KARC\prod_targeting\";
 report_output_dir = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\prod_targeting\";
 
 debug_log_path = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\prod_targeting\sDTT_Prod_Targeting_Report_TEST_debug.txt";
 debug_log = "";
 last_combined_window_title = "";
+dt_main_review = .;
+current_metric_cfg = .;
 current_tech_str = "";
+report_product_family = "FCCD";
+report_layer_title_value = "MT1";
 
 by_col        = "WEC_LAYER";
 time_col      = "DATA_COLLECTION_TIME";
 pilot_col     = "PROD_MOP_PILOT";
 site_col      = "SPC_SITE";
 site_pilot_col = "SITE_PROD_MOP_PILOT";
+allowed_structures = {"NESTVIA_PR", "NESTVIA_HM", "TRENCH", "ETE"};
 
 total_panel_height    = 420;
 trend_frame_width     = 400;
 var_frame_height      = 300;
 varchart_group_width  = 40;
+var_chart_width_scale = 1.10;
 use_uniform_var_width = 0;
 trend_bottom_padding  = 24;
 prod_mop_pilot_height = 60;
@@ -51,6 +53,102 @@ LCL_COLOR = "Red";
 ucl_label = "UCL";
 cl_label  = "";
 lcl_label = "LCL";
+
+Get_Metric_Config = Function( {metric_mode_raw},
+    mode_text = Uppercase( Trim( Char( metric_mode_raw ) ) );
+    If( mode_text != "SIGMA",
+        mode_text = "MEAN"
+    );
+
+    cfg = Associative Array();
+    cfg["mode"] = mode_text;
+    cfg["mode_token_lower"] = Lowercase( mode_text );
+
+    If( mode_text == "SIGMA",
+        cfg["dtt_value_col"] = "ALLSTATS_SIGMA_DTT_VALUE";
+        cfg["wafer_value_col"] = "ALLSTATS_WAFER_SIGMA_VALUE";
+        cfg["target_value_col"] = "ALLSTATS_SIGMA_TARGET_VALUE";
+        cfg["dtt_metric_label"] = "SIGMA_DTT";
+        cfg["wafer_metric_label"] = "WAFER_SIGMA";
+        cfg["dtt_trend_title"] = "SIGMA DTT TREND";
+        cfg["dtt_var_title"] = "SIGMA DTT VAR";
+        cfg["wafer_trend_title"] = "WAFER SIGMA TREND";
+        cfg["wafer_var_title"] = "WAFER SIGMA VAR";
+        cfg["dtt_ucl_col"] = "STATISTICS_SIGMA_DTT_UCL";
+        cfg["dtt_cl_col"] = "STATISTICS_SIGMA_DTT_CENTERLINE";
+        cfg["dtt_lcl_col"] = "STATISTICS_SIGMA_DTT_LCL";
+    ,
+        cfg["dtt_value_col"] = "ALLSTATS_MEAN_DTT_VALUE";
+        cfg["wafer_value_col"] = "ALLSTATS_WAFER_MEAN_VALUE";
+        cfg["target_value_col"] = "ALLSTATS_MEAN_TARGET_VALUE";
+        cfg["dtt_metric_label"] = "MEAN_DTT";
+        cfg["wafer_metric_label"] = "WAFER_MEAN";
+        cfg["dtt_trend_title"] = "MEAN DTT TREND";
+        cfg["dtt_var_title"] = "MEAN DTT VAR";
+        cfg["wafer_trend_title"] = "WAFER MEAN TREND";
+        cfg["wafer_var_title"] = "WAFER MEAN VAR";
+        cfg["dtt_ucl_col"] = "STATISTICS_MEAN_DTT_UCL";
+        cfg["dtt_cl_col"] = "STATISTICS_MEAN_DTT_CENTERLINE";
+        cfg["dtt_lcl_col"] = "STATISTICS_MEAN_DTT_LCL";
+    );
+
+    cfg;
+);
+
+Resolve_First_Existing_Column = Function( {dt, candidates, col_role, metric_mode},
+    table_col_names = dt << Get Column Names( "String" );
+
+    For( ci = 1, ci <= N Items( candidates ), ci++,
+        cand = Uppercase( Trim( Char( candidates[ci] ) ) );
+
+        For( ti = 1, ti <= N Items( table_col_names ), ti++,
+            table_name = Trim( Char( table_col_names[ti] ) );
+            If( Uppercase( table_name ) == cand,
+                Return( table_name );
+            );
+        );
+    );
+
+    Throw(
+        "Missing required metric column for mode " || metric_mode ||
+        " | role=" || col_role ||
+        " | candidates=" || Char( candidates )
+    );
+);
+
+Resolve_Metric_Config_For_Table = Function( {dt, metric_cfg},
+    mode_text = metric_cfg["mode"];
+
+    If( mode_text == "SIGMA",
+        dtt_candidates = {"ALLSTATS_SIGMA_DTT_VALUE", "STATISTICS_SIGMA_DTT_VALUE"};
+        wafer_candidates = {"ALLSTATS_WAFER_SIGMA_VALUE"};
+        target_candidates = {"ALLSTATS_SIGMA_TARGET_VALUE"};
+    ,
+        dtt_candidates = {"ALLSTATS_MEAN_DTT_VALUE", "STATISTICS_MEAN_DTT_VALUE"};
+        wafer_candidates = {"ALLSTATS_WAFER_MEAN_VALUE"};
+        target_candidates = {"ALLSTATS_MEAN_TARGET_VALUE"};
+    );
+
+    metric_cfg["dtt_value_col"] = Resolve_First_Existing_Column( dt, dtt_candidates, "dtt_value", mode_text );
+    metric_cfg["wafer_value_col"] = Resolve_First_Existing_Column( dt, wafer_candidates, "wafer_value", mode_text );
+    metric_cfg["target_value_col"] = Resolve_First_Existing_Column( dt, target_candidates, "target_value", mode_text );
+
+    metric_cfg;
+);
+
+Resolve_Column_Name_For_Table = Function( {dt, candidates, col_role},
+    table_col_names = dt << Get Column Names( "String" );
+    For( ci = 1, ci <= N Items( candidates ), ci++,
+        cand = Uppercase( Trim( Char( candidates[ci] ) ) );
+        For( ti = 1, ti <= N Items( table_col_names ), ti++,
+            table_name = Trim( Char( table_col_names[ti] ) );
+            If( Uppercase( table_name ) == cand,
+                Return( table_name );
+            );
+        );
+    );
+    Throw( "Missing required column for AMCT export: role=" || col_role || " | candidates=" || Char( candidates ) );
+);
 
 Log_Debug = Function( {msg},
     _line = Char( Today() ) || " | " || Char( msg );
@@ -80,11 +178,24 @@ Extract_By_Value = Function( {title_text, by_col_name},
     Return( Trim( Word( -1, title_text, "=" ) ) );
 );
 
-Build_Limit_Config = Function( {dt},
+Build_Limit_Config = Function( {dt, metric_cfg},
     config = Associative Array();
     recent_limits_mdttucl = Associative Array();
     recent_limits_mdttcl  = Associative Array();
     recent_limits_mdttlcl = Associative Array();
+    use_dtt_limits = 1;
+
+    ucl_col_name = metric_cfg["dtt_ucl_col"];
+    cl_col_name = metric_cfg["dtt_cl_col"];
+    lcl_col_name = metric_cfg["dtt_lcl_col"];
+
+    If(
+        Try( Column( dt, ucl_col_name ); 1, 0 ) == 0
+        | Try( Column( dt, cl_col_name ); 1, 0 ) == 0
+        | Try( Column( dt, lcl_col_name ); 1, 0 ) == 0,
+        use_dtt_limits = 0;
+        Log_Debug( "DTT limit columns unavailable for mode=" || metric_cfg["mode"] || ". Using data padding only." );
+    );
 
     unique_layers = Associative Array( dt:WEC_LAYER ) << Get Keys;
     Log_Debug( "Building limit config. Distinct layers=" || Char( N Items( unique_layers ) ) );
@@ -96,11 +207,11 @@ Build_Limit_Config = Function( {dt},
             rows = dt << Get Rows Where( :WEC_LAYER == current_layer );
         );
 
-        If( N Items( rows ) > 0,
+        If( N Items( rows ) > 0 & use_dtt_limits == 1,
             first_row_for_layer = rows[1];
-            recent_limits_mdttucl[current_layer] = dt:STATISTICS_MEAN_DTT_UCL[first_row_for_layer];
-            recent_limits_mdttcl[current_layer]  = dt:STATISTICS_MEAN_DTT_CENTERLINE[first_row_for_layer];
-            recent_limits_mdttlcl[current_layer] = dt:STATISTICS_MEAN_DTT_LCL[first_row_for_layer];
+            recent_limits_mdttucl[current_layer] = Column( dt, ucl_col_name )[first_row_for_layer];
+            recent_limits_mdttcl[current_layer]  = Column( dt, cl_col_name )[first_row_for_layer];
+            recent_limits_mdttlcl[current_layer] = Column( dt, lcl_col_name )[first_row_for_layer];
             Log_Debug(
                 "LIMITS " || current_layer ||
                 " | UCL=" || Char( recent_limits_mdttucl[current_layer] ) ||
@@ -112,6 +223,7 @@ Build_Limit_Config = Function( {dt},
         );
     );
 
+    config["use_dtt_limits"] = use_dtt_limits;
     config["recent_limits_mdttucl"] = recent_limits_mdttucl;
     config["recent_limits_mdttcl"]  = recent_limits_mdttcl;
     config["recent_limits_mdttlcl"] = recent_limits_mdttlcl;
@@ -154,7 +266,12 @@ Apply_Generic_Y_Padding = Function( {rpt, dt_ref, y_col_name, layer_value},
     );
 );
 
-Apply_Mean_DTT_Limits = Function( {rpt, dt_ref, y_col_name, layer_value, limit_config},
+Apply_DTT_Limits = Function( {rpt, dt_ref, y_col_name, layer_value, limit_config, metric_cfg},
+    If( limit_config["use_dtt_limits"] != 1,
+        Apply_Generic_Y_Padding( rpt, dt_ref, y_col_name, layer_value );
+        Return();
+    );
+
     recent_limits_mdttucl = limit_config["recent_limits_mdttucl"];
     recent_limits_mdttcl  = limit_config["recent_limits_mdttcl"];
     recent_limits_mdttlcl = limit_config["recent_limits_mdttlcl"];
@@ -221,7 +338,7 @@ Apply_Mean_DTT_Limits = Function( {rpt, dt_ref, y_col_name, layer_value, limit_c
         } );
 
         Log_Debug(
-            "MEAN_DTT YLIM | layer=" || layer_value ||
+            metric_cfg["mode"] || "_DTT YLIM | layer=" || layer_value ||
             " | data_min=" || Char( data_min ) ||
             " | data_max=" || Char( data_max ) ||
             " | lcl=" || Char( lcl ) ||
@@ -247,18 +364,6 @@ Parse_Pilot_List = Function( {raw_text},
     pilots;
 );
 
-Parse_Layer_List = Function( {raw_text},
-    tokens = Words( Char( raw_text ), "," );
-    layers = {};
-    For( i = 1, i <= N Items( tokens ), i++,
-        tok = Trim( tokens[i] );
-        If( tok != "" & !Contains( layers, tok ),
-            Insert Into( layers, tok );
-        );
-    );
-    layers;
-);
-
 Build_Site_Prod_Mop_Pilot_Column = Function( {dt},
     If( Try( Column( dt, site_pilot_col ); 1, 0 ) == 0,
         dt << New Column( "SITE_PROD_MOP_PILOT", Character );
@@ -272,7 +377,49 @@ Build_Site_Prod_Mop_Pilot_Column = Function( {dt},
     Log_Debug( "Built column SITE_PROD_MOP_PILOT rows=" || Char( n_rows ) );
 );
 
-Apply_Target_Regime_Filter = Function( {dt},
+Build_PG_MOP_PILOT_Column = Function( {dt},
+    If( Try( Column( dt, "PG_MOP_PILOT" ); 1, 0 ) == 0,
+        dt << New Column( "PG_MOP_PILOT", Character );
+    );
+
+    Try( Column( dt, "PG_MOP_PILOT" ) << Delete Formula );
+
+    has_product_group = Try( Column( dt, "PRODUCT_GROUP" ); 1, 0 );
+    has_spc_operation = Try( Column( dt, "SPC_OPERATION" ); 1, 0 );
+    has_spc_pilot = Try( Column( dt, "SPC_PILOT" ); 1, 0 );
+    has_spc_pilot_name = Try( Column( dt, "SPC_PILOT_NAME" ); 1, 0 );
+
+    If( has_product_group == 0,
+        Throw( "Missing required column for PG_MOP_PILOT: PRODUCT_GROUP" );
+    );
+    If( has_spc_operation == 0,
+        Throw( "Missing required column for PG_MOP_PILOT: SPC_OPERATION" );
+    );
+    If( has_spc_pilot == 0 & has_spc_pilot_name == 0,
+        Throw( "Missing required column for PG_MOP_PILOT: SPC_PILOT (or SPC_PILOT_NAME)" );
+    );
+
+    n_rows = N Rows( dt );
+    For( i = 1, i <= n_rows, i++,
+        product_group_value = Trim( Char( dt:PRODUCT_GROUP[i] ) );
+        spc_operation_value = Trim( Char( dt:SPC_OPERATION[i] ) );
+        spc_pilot_value = "";
+
+        // Prefer SPC_PILOT_NAME to align with user-facing naming in source CSVs.
+        If( has_spc_pilot_name == 1,
+            spc_pilot_value = Trim( Char( Column( dt, "SPC_PILOT_NAME" )[i] ) );
+        );
+        If( spc_pilot_value == "" & has_spc_pilot == 1,
+            spc_pilot_value = Trim( Char( Column( dt, "SPC_PILOT" )[i] ) );
+        );
+
+        dt:PG_MOP_PILOT[i] = product_group_value || "_" || spc_operation_value || "_" || spc_pilot_value;
+    );
+
+    Log_Debug( "Built column PG_MOP_PILOT rows=" || Char( n_rows ) );
+);
+
+Apply_Target_Regime_Filter = Function( {dt, metric_cfg},
     // Sort to ensure trailing regime logic follows time order per (pilot, layer)
     dt << Sort(
         By( :PROD_MOP_PILOT, :WEC_LAYER, :DATA_COLLECTION_TIME ),
@@ -323,7 +470,7 @@ Apply_Target_Regime_Filter = Function( {dt},
 
         n = N Items( rows );
         last_row = rows[n];
-        last_tgt = Num( dt:ALLSTATS_MEAN_TARGET_VALUE[last_row] );
+        last_tgt = Num( Column( dt, metric_cfg["target_value_col"] )[last_row] );
 
         If( Is Missing( last_tgt ),
             For( j = 1, j <= n, j++,
@@ -335,7 +482,7 @@ Apply_Target_Regime_Filter = Function( {dt},
 
         regime_start = n;
         While( regime_start > 1,
-            prev_tgt = Num( dt:ALLSTATS_MEAN_TARGET_VALUE[rows[regime_start - 1]] );
+            prev_tgt = Num( Column( dt, metric_cfg["target_value_col"] )[rows[regime_start - 1]] );
             If( Is Missing( prev_tgt ) | prev_tgt != last_tgt,
                 Break();
             );
@@ -449,18 +596,25 @@ Parse_Prod_Mop_Pilot = Function( {pilot_token},
     parts;
 );
 
-Export_AMCT_Target_Lines = Function( {dt_source, output_dir},
-    required_cols = {"PROD_MOP_PILOT", "WEC_LAYER", "ALLSTATS_WAFER_MEAN_VALUE", "ALLSTATS_MEAN_TARGET_VALUE"};
-    For( req_i = 1, req_i <= N Items( required_cols ), req_i++,
-        If( Try( Column( dt_source, required_cols[req_i] ); 1, 0 ) == 0,
-            Throw( "Missing required column for AMCT export: " || required_cols[req_i] )
-        );
+Export_AMCT_Target_Lines = Function( {dt_source, output_dir, metric_cfg},
+    metric_cfg_local = Resolve_Metric_Config_For_Table( dt_source, metric_cfg );
+    pilot_col_local = Resolve_Column_Name_For_Table( dt_source, {"PROD_MOP_PILOT"}, "pilot" );
+    wec_col_local = Resolve_Column_Name_For_Table( dt_source, {"WEC_LAYER"}, "wec_layer" );
+    wafer_col_local = metric_cfg_local["wafer_value_col"];
+    target_col_local = metric_cfg_local["target_value_col"];
+
+    Log_Debug(
+        "AMCT EXPORT SOURCE | table=" || Char( dt_source << Get Name ) ||
+        " | pilot_col=" || pilot_col_local ||
+        " | wec_col=" || wec_col_local ||
+        " | wafer_col=" || wafer_col_local ||
+        " | target_col=" || target_col_local
     );
 
     dt_export = Data Table( dt_source ) << Summary(
-        Group( :PROD_MOP_PILOT, :WEC_LAYER ),
-        Mean( :ALLSTATS_WAFER_MEAN_VALUE ),
-        Mean( :ALLSTATS_MEAN_TARGET_VALUE ),
+        Group( Column( dt_source, pilot_col_local ), Column( dt_source, wec_col_local ) ),
+        Mean( Column( dt_source, wafer_col_local ) ),
+        Mean( Column( dt_source, target_col_local ) ),
         Freq( "None" ),
         Weight( "None" ),
         Link to original data table( 0 ),
@@ -472,8 +626,8 @@ Export_AMCT_Target_Lines = Function( {dt_source, output_dir},
         Return( "" )
     );
 
-    Column( dt_export, "Mean(ALLSTATS_WAFER_MEAN_VALUE)" ) << Set Name( "PROPOSED_TARGET" );
-    Column( dt_export, "Mean(ALLSTATS_MEAN_TARGET_VALUE)" ) << Set Name( "CURRENT_TARGET" );
+    Column( dt_export, "Mean(" || wafer_col_local || ")" ) << Set Name( "PROPOSED_TARGET" );
+    Column( dt_export, "Mean(" || target_col_local || ")" ) << Set Name( "CURRENT_TARGET" );
     If( Try( Column( dt_export, "N Rows" ); 1, 0 ) == 1,
         Column( dt_export, "N Rows" ) << Set Name( "ROW_COUNT" )
     );
@@ -579,27 +733,44 @@ Export_AMCT_Target_Lines = Function( {dt_source, output_dir},
         );
     );
 
-    export_path = output_dir || "amct_target_lines_" || Build_Timestamp_String() || ".csv";
+    export_filename = "amct_target_lines_" || metric_cfg["mode_token_lower"] || "_" || Build_Timestamp_String() || ".csv";
+    export_path_primary = output_dir || export_filename;
+    export_path_fallback = report_output_dir || export_filename;
+    export_path = "";
+
+    // Ensure primary directory exists; if not creatable/writable, fall back.
+    Try( Create Directory( output_dir ) );
+
+    saved_primary = 0;
     Try(
-        dt_export << Save( export_path );
-        Log_Debug( "AMCT export saved | path=" || export_path || " | rows=" || Char( N Rows( dt_export ) ) );
-    ,
-        Throw( "Failed to save AMCT target export CSV: " || export_path )
+        dt_export << Save( export_path_primary );
+        saved_primary = 1;
+        export_path = export_path_primary;
+        Log_Debug( "AMCT export saved | path=" || export_path_primary || " | rows=" || Char( N Rows( dt_export ) ) );
+    );
+
+    If( saved_primary != 1,
+        Try( Create Directory( report_output_dir ) );
+        Try(
+            dt_export << Save( export_path_fallback );
+            export_path = export_path_fallback;
+            Log_Debug( "AMCT export saved via fallback | path=" || export_path_fallback || " | rows=" || Char( N Rows( dt_export ) ) );
+        ,
+            Throw( "Failed to save AMCT target export CSV: " || export_path_primary || " | fallback=" || export_path_fallback )
+        );
     );
 
     Try( dt_export << Close Window( "NoSave" ) );
     export_path;
 );
 
-Apply_Chart_Formatting = Function( {report_obj, dt_ref, y_col_name, legend_col_name, limit_config, chart_kind},
+Apply_Chart_Formatting = Function( {report_obj, dt_ref, y_col_name, legend_col_name, limit_config, chart_kind, metric_cfg},
     reports_raw = report_obj << Report;
     If( Type( reports_raw ) == "List",
         reports = reports_raw;
     ,
         reports = {reports_raw};
     );
-
-    axisbox2_height = If( chart_kind == "VAR", prod_mop_pilot_height + site_height, 0 );
 
     If( chart_kind == "VAR" & use_uniform_var_width == 1,
         // Keep all Variability panels the same width within a window.
@@ -619,7 +790,7 @@ Apply_Chart_Formatting = Function( {report_obj, dt_ref, y_col_name, legend_col_n
         If( max_groups_for_width <= 0,
             max_groups_for_width = 1;
         );
-        uniform_var_width = Max( min_varchart_width, max_groups_for_width * varchart_group_width * 0.6 );
+        uniform_var_width = Max( min_varchart_width, max_groups_for_width * varchart_group_width * 0.6 ) * var_chart_width_scale;
         Log_Debug( "VAR WIDTH UNIFORM | groups_used=" || Char( max_groups_for_width ) || " | width=" || Char( uniform_var_width ) );
     );
 
@@ -646,7 +817,6 @@ Apply_Chart_Formatting = Function( {report_obj, dt_ref, y_col_name, legend_col_n
 
         If( chart_kind == "VAR",
             Try( rpt[AxisBox( 2 )] << Axis Settings( {Label Orientation( "Angled" )} ) );
-            Try( rpt[AxisBox( 2 )] << Set Height( axisbox2_height ) );
 
             // Optional hide of individual grouping-level labels
             Try(
@@ -689,7 +859,7 @@ Apply_Chart_Formatting = Function( {report_obj, dt_ref, y_col_name, legend_col_n
                 groups_for_width = If( groups_closest > 0, groups_closest, groups_axis );
                 If( use_uniform_var_width == 1,
                     var_width = uniform_var_width,
-                    var_width = Max( min_varchart_width, groups_for_width * varchart_group_width )
+                    var_width = Max( min_varchart_width, groups_for_width * varchart_group_width ) * var_chart_width_scale
                 );
                 Log_Debug(
                     "VAR WIDTH | layer=" || layer_value ||
@@ -704,14 +874,14 @@ Apply_Chart_Formatting = Function( {report_obj, dt_ref, y_col_name, legend_col_n
                 Log_Debug(
                     "VAR HEIGHT | layer=" || layer_value ||
                     " | frame_height=" || Char( var_frame_height ) ||
-                    " | axisbox2_height=" || Char( axisbox2_height )
+                    " | axisbox2_height=auto"
                 );
             );
         ,
             Try(
                 rpt[ScaleBox( 1 )] << {
                     Interval( "Week" ),
-                    Inc( 2 ),
+                    Inc( 1 ),
                     Minor Ticks( 0 ),
                     Label Row( {
                         Label Orientation( "Angled" ),
@@ -736,8 +906,8 @@ Apply_Chart_Formatting = Function( {report_obj, dt_ref, y_col_name, legend_col_n
             Try( rpt[BorderBox( 4 )] << Visibility( "Visible" ) );
         );
 
-        If( y_col_name == "ALLSTATS_MEAN_DTT_VALUE",
-            Apply_Mean_DTT_Limits( rpt, dt_ref, y_col_name, layer_value, limit_config );
+        If( y_col_name == metric_cfg["dtt_value_col"],
+            Apply_DTT_Limits( rpt, dt_ref, y_col_name, layer_value, limit_config, metric_cfg );
         ,
             Apply_Generic_Y_Padding( rpt, dt_ref, y_col_name, layer_value );
         );
@@ -771,6 +941,70 @@ Hide_Spline_Fit_Outlines = Function( {platform_obj},
     );
 );
 
+Set_Spline_Control_Boxes_Visibility = Function( {platform_obj, make_visible},
+    reports_raw = platform_obj << Report;
+    If( Type( reports_raw ) == "List",
+        reports = reports_raw;
+    ,
+        reports = {reports_raw};
+    );
+
+    For Each( {rpt}, reports,
+        If( make_visible == 1,
+            Try( rpt[BorderBox( 3 )] << Visibility( "Visible" ) );
+            Try( rpt[BorderBox( 4 )] << Visibility( "Visible" ) );
+            Try( rpt[BorderBox( 5 )] << Visibility( "Visible" ) );
+            Try( rpt[BorderBox( 6 )] << Visibility( "Visible" ) );
+        ,
+            // Some report boxes respond to Hidden first, then Collapse.
+            Try( rpt[BorderBox( 3 )] << Visibility( "Hidden" ) );
+            Try( rpt[BorderBox( 4 )] << Visibility( "Hidden" ) );
+            Try( rpt[BorderBox( 5 )] << Visibility( "Hidden" ) );
+            Try( rpt[BorderBox( 6 )] << Visibility( "Hidden" ) );
+
+            Try( rpt[BorderBox( 3 )] << Visibility( "Collapse" ) );
+            Try( rpt[BorderBox( 4 )] << Visibility( "Collapse" ) );
+            Try( rpt[BorderBox( 5 )] << Visibility( "Collapse" ) );
+            Try( rpt[BorderBox( 6 )] << Visibility( "Collapse" ) );
+
+            // Also re-collapse spline outline nodes if they were reopened.
+            outlines = rpt << XPath( "//OutlineBox" );
+            For( oi = 1, oi <= N Items( outlines ), oi++,
+                ot = Lowercase( Trim( Char( outlines[oi] << Get Title ) ) );
+                If( Contains( ot, "spline" ) > 0,
+                    Try( outlines[oi] << Visibility( "Collapse" ) );
+                );
+            );
+        );
+    );
+);
+
+Toggle_Spline_Control_Boxes_Query = Function( {trend_obj_a, trend_obj_b},
+    reports_a_raw = trend_obj_a << Report;
+    If( Type( reports_a_raw ) == "List",
+        reports_a = reports_a_raw;
+    ,
+        reports_a = {reports_a_raw};
+    );
+
+    // Query actual visibility from first report's BorderBox(3)
+    is_currently_visible = 0;
+    For Each( {rpt}, reports_a,
+        Try(
+            vis_text = Char( rpt[BorderBox( 3 )] << Get Visibility );
+            If( vis_text == "Visible" | vis_text == "Hidden",
+                is_currently_visible = 1;
+            );
+        );
+    );
+
+    // Toggle to opposite state
+    new_visible_state = 1 - is_currently_visible;
+    Set_Spline_Control_Boxes_Visibility( trend_obj_a, new_visible_state );
+    Set_Spline_Control_Boxes_Visibility( trend_obj_b, new_visible_state );
+    Log_Debug( "SPLINE CONTROL TOGGLE | was_visible=" || Char( is_currently_visible ) || " | now_visible=" || Char( new_visible_state ) );
+);
+
 Rename_FitGroup_Figure_Outlines = Function( {platform_obj, metric_label, layer_value, chart_role},
     reports_raw = platform_obj << Report;
     If( Type( reports_raw ) == "List",
@@ -792,22 +1026,22 @@ Rename_FitGroup_Figure_Outlines = Function( {platform_obj, metric_label, layer_v
 
             If( chart_role == "VAR",
                 If( Contains( old_lower, "variability gauge analysis" ) > 0,
-                    new_title = "ANALYSIS | " || metric_label || " | LAYER=" || layer_value;
+                    new_title = "ANALYSIS | " || metric_label || " | LAYER=" || report_layer_title_value;
                 ,
                     If( Contains( old_lower, "variability chart" ) > 0,
-                        new_title = "VAR CHART | " || metric_label || " | LAYER=" || layer_value;
+                        new_title = "VAR CHART | " || metric_label || " | LAYER=" || report_layer_title_value;
                     ,
                         If( Contains( old_lower, "variability gauge" ) > 0,
-                            new_title = "GAUGE | " || metric_label || " | LAYER=" || layer_value;
+                            new_title = "GAUGE | " || metric_label || " | LAYER=" || report_layer_title_value;
                         );
                     );
                 );
             ,
                 If( Contains( old_lower, "bivariate" ) > 0,
                     If( chart_role == "TREND_PROD",
-                        new_title = "TREND BY PROD_MOP_PILOT | " || metric_label || " | LAYER=" || layer_value;
+                        new_title = "TREND BY PROD_MOP_PILOT | " || metric_label || " | LAYER=" || report_layer_title_value;
                     ,
-                        new_title = "TREND BY SITE_PROD_MOP_PILOT | " || metric_label || " | LAYER=" || layer_value;
+                        new_title = "TREND BY SITE_PROD_MOP_PILOT | " || metric_label || " | LAYER=" || report_layer_title_value;
                     );
                 );
             );
@@ -819,15 +1053,13 @@ Rename_FitGroup_Figure_Outlines = Function( {platform_obj, metric_label, layer_v
     );
 );
 
-Apply_Custom_Display_Titles = Function( {trend_obj, var_obj, metric_label, layer_value},
-    layer_title = current_tech_str || " NEST HCCD | LAYER=" || layer_value;
-
-    If( metric_label == "MEAN_DTT",
-        trend_title = "MEAN DTT | " || layer_title;
-        var_title = "MEAN DTT | " || current_tech_str || " NEST HCCD";
+Apply_Custom_Display_Titles = Function( {trend_obj, var_obj, metric_label, metric_cfg},
+    If( metric_label == metric_cfg["dtt_metric_label"],
+        trend_title = metric_cfg["dtt_trend_title"];
+        var_title = metric_cfg["dtt_var_title"];
     ,
-        trend_title = "WAFER MEAN | " || layer_title;
-        var_title = "WAFER MEAN | " || current_tech_str || " NEST HCCD";
+        trend_title = metric_cfg["wafer_trend_title"];
+        var_title = metric_cfg["wafer_var_title"];
     );
 
     trend_reports_raw = trend_obj << Report;
@@ -866,7 +1098,22 @@ Build_Layer_Subset = Function( {dt_source, layer_value},
     dt_layer;
 );
 
-Build_Metric_Block = Function( {dt_layer, y_col_name, metric_label, limit_config, layer_value, include_site_group},
+Build_Pilot_Subset = Function( {dt_source, pilot_value},
+    If( pilot_col == "PG_MOP_PILOT",
+        dt_source << Select Where( :PG_MOP_PILOT == pilot_value );
+    ,
+        dt_source << Select Where( :PROD_MOP_PILOT == pilot_value );
+    );
+    dt_pilot = dt_source << Subset(
+        Output Table Name( "ProdTarget Pilot Table - " || pilot_value ),
+        Selected Rows( 1 ),
+        All columns
+    );
+    dt_source << Clear Select;
+    dt_pilot;
+);
+
+Build_Metric_Block = Function( {dt_layer, y_col_name, metric_label, limit_config, layer_value, metric_cfg},
     // Set colors at the layer-table level before creating charts.
     dt_layer << Color or Mark by Column(
         Column( dt_layer, pilot_col ),
@@ -885,7 +1132,7 @@ Build_Metric_Block = Function( {dt_layer, y_col_name, metric_label, limit_config
 
         var_chart = dt_layer << Variability Chart(
             Y( Column( dt_layer, y_col_name ) ),
-            X( Column( dt_layer, pilot_col ), Column( dt_layer, site_col ) ),
+            X( Column( dt_layer, pilot_col ) ),
             By( Column( dt_layer, by_col ) ),
             Connect Cell Means( 1 ),
             Show Cell Means( 1 ),
@@ -894,16 +1141,19 @@ Build_Metric_Block = Function( {dt_layer, y_col_name, metric_label, limit_config
         )
     );
 
-    Apply_Chart_Formatting( var_chart, dt_layer, y_col_name, pilot_col, limit_config, "VAR" );
-    Apply_Chart_Formatting( tr_prod, dt_layer, y_col_name, pilot_col, limit_config, "TREND_PROD" );
+    Apply_Chart_Formatting( var_chart, dt_layer, y_col_name, pilot_col, limit_config, "VAR", metric_cfg );
+    Apply_Chart_Formatting( tr_prod, dt_layer, y_col_name, pilot_col, limit_config, "TREND_PROD", metric_cfg );
 
     // Fit splines after row legend/theme is applied so spline colors track group colors.
     Try( tr_prod << Fit Spline( 0.1, Standardized, {Report( 0 ), Line Width( 0.1 )} ) );
     Hide_Spline_Fit_Outlines( tr_prod );
 
-    Apply_Custom_Display_Titles( tr_prod, var_chart, metric_label, layer_value );
+    Apply_Custom_Display_Titles( tr_prod, var_chart, metric_label, metric_cfg );
 
-    metric_block;
+    block_result = Associative Array();
+    block_result["box"] = metric_block;
+    block_result["trend"] = tr_prod;
+    block_result;
 );
 
 Make_Copy_Button = Function( {outline_ref, lyr_label},
@@ -916,42 +1166,99 @@ Make_Copy_Button = Function( {outline_ref, lyr_label},
     )
 );
 
-Build_Combined_Report_Window = Function( {dt_main, window_title, limit_config, layer_list, include_site_group},
-    Log_Debug( "BUILD WINDOW | " || window_title || " | layers=" || Char( N Items( layer_list ) ) );
+Make_Spline_Toggle_Button = Function( {trend_obj_a, trend_obj_b, section_label},
+    Eval(
+        Substitute(
+            Expr(
+                Button Box(
+                    _btn_lbl_,
+                    Toggle_Spline_Control_Boxes_Query( _trend_a_, _trend_b_ )
+                )
+            ),
+            Expr( _btn_lbl_ ), "Show/Hide Spline Controls - " || section_label,
+            Expr( _trend_a_ ), trend_obj_a,
+            Expr( _trend_b_ ), trend_obj_b
+        )
+    )
+);
+
+Build_Combined_Report_Window = Function( {dt_main, window_title, limit_config, pilot_list, selected_structure, metric_cfg},
+    Log_Debug( "BUILD WINDOW | " || window_title || " | pilots=" || Char( N Items( pilot_list ) ) );
 
     win = New Window( window_title,
-        root_v = V List Box()
+        root_v = V List Box(
+            H List Box(
+                Button Box( "Export Target CSV",
+                    Export_Target_CSV_Dialog_Action();
+                )
+            )
+        )
     );
 
-    For( li = 1, li <= N Items( layer_list ), li++,
-        layer_value = layer_list[li];
-        dt_layer = Build_Layer_Subset( dt_main, layer_value );
-        layer_rows = N Rows( dt_layer );
-        Log_Debug( "LAYER SECTION | " || layer_value || " | rows=" || Char( layer_rows ) );
+    For( pi = 1, pi <= N Items( pilot_list ), pi++,
+        pilot_value = pilot_list[pi];
+        dt_pilot = Build_Pilot_Subset( dt_main, pilot_value );
 
-        If( layer_rows == 0,
-            Try( dt_layer << Close Window );
+        If( !Is Scriptable( dt_pilot ),
+            Log_Debug( "PILOT SECTION | " || pilot_value || " | subset table not scriptable (skipping)" );
             Continue();
         );
 
-        section_content = H List Box(
-            Build_Metric_Block( dt_layer, "ALLSTATS_MEAN_DTT_VALUE", "MEAN_DTT", limit_config, layer_value, include_site_group ),
-            Build_Metric_Block( dt_layer, "ALLSTATS_WAFER_MEAN_VALUE", "WAFER_MEAN", limit_config, layer_value, include_site_group )
+        pilot_rows = Try( N Rows( dt_pilot ), 0 );
+        Log_Debug( "PILOT SECTION | " || pilot_value || " | rows=" || Char( pilot_rows ) );
+
+        If( pilot_rows == 0,
+            Try( dt_pilot << Close Window );
+            Continue();
         );
 
-        section_outline = Outline Box(
-            current_tech_str || " NEST HCCD | LAYER=" || layer_value,
-            section_content
+        pilot_layers = Associative Array( Column( dt_pilot, by_col ) ) << Get Keys;
+        Sort List( pilot_layers );
+        pilot_v = V List Box();
+
+        For( li = 1, li <= N Items( pilot_layers ), li++,
+            layer_value = pilot_layers[li];
+            dt_layer = Build_Layer_Subset( dt_pilot, layer_value );
+            layer_rows = N Rows( dt_layer );
+            Log_Debug( "  LAYER SECTION | " || pilot_value || " | " || layer_value || " | rows=" || Char( layer_rows ) );
+
+            If( layer_rows == 0,
+                Try( dt_layer << Close Window );
+                Continue();
+            );
+
+            mean_block = Build_Metric_Block( dt_layer, metric_cfg["dtt_value_col"], metric_cfg["dtt_metric_label"], limit_config, layer_value, metric_cfg );
+            wafer_block = Build_Metric_Block( dt_layer, metric_cfg["wafer_value_col"], metric_cfg["wafer_metric_label"], limit_config, layer_value, metric_cfg );
+
+            section_content = H List Box(
+                mean_block["box"],
+                wafer_block["box"]
+            );
+
+            section_outline = Outline Box(
+                current_tech_str || " " || report_product_family || " | STRUCTURE=" || selected_structure || " | PILOT=" || pilot_value || " | LAYER=" || report_layer_title_value,
+                section_content
+            );
+
+            pilot_v << Append(
+                V List Box(
+                    section_outline,
+                    V List Box(
+                        Make_Copy_Button( section_outline, pilot_value || " | " || layer_value ),
+                        Make_Spline_Toggle_Button( mean_block["trend"], wafer_block["trend"], pilot_value || " | " || layer_value )
+                    )
+                )
+            );
         );
 
         root_v << Append(
-            V List Box(
-                section_outline,
-                H List Box(
-                    Make_Copy_Button( section_outline, layer_value )
-                )
+            Outline Box(
+                "PROD_MOP_PILOT=" || pilot_value,
+                pilot_v
             )
         );
+
+        Try( dt_pilot << Close Window );
     );
 
     win << Maximize Window;
@@ -986,12 +1293,25 @@ Close_Previous_Generated_Windows = Function( {},
 );
 
 Build_Prod_Targeting = Function(
-    {pilot_list, include_full_history, use_spc_mode, include_site_group, layer_filter_list, close_windows, dlg_win, tech_str},
+    {pilot_list, selected_structure, metric_mode, filter_column, use_spc_mode, close_windows, dlg_win},
 
     debug_log = "";
     Log_Debug( "START PROD TARGETING" );
+    Log_Debug( "FILTER_COLUMN=" || filter_column );
     Log_Debug( "PILOTS=" || Char( pilot_list ) );
-    Log_Debug( "LAYERS=" || Char( layer_filter_list ) );
+    Log_Debug( "STRUCTURE=" || Char( selected_structure ) );
+
+    metric_cfg = Get_Metric_Config( metric_mode );
+    current_metric_cfg = metric_cfg;
+    Log_Debug(
+        "METRIC MODE=" || metric_cfg["mode"] ||
+        " | dtt_col=" || metric_cfg["dtt_value_col"] ||
+        " | wafer_col=" || metric_cfg["wafer_value_col"] ||
+        " | target_col=" || metric_cfg["target_value_col"]
+    );
+
+    // Dynamically set pilot column based on filter_column parameter
+    pilot_col = filter_column;
 
     If( close_windows == 1,
         Log_Debug( "Close option enabled: closing windows except dialog" );
@@ -1012,53 +1332,59 @@ Build_Prod_Targeting = Function(
 
     Close_Previous_Generated_Tables();
 
-    current_tech_str = tech_str;
-    Log_Debug( "TECH=" || tech_str );
+    current_tech_str = "1280 KARC";
+    Log_Debug( "TECH=" || current_tech_str );
 
-    If( tech_str == "1280",
-        If( !File Exists( path_1280_d1v ),
-            Throw( "Missing input file: " || path_1280_d1v );
-        );
-        dt_main = Open( path_1280_d1v );
-        dt_main << Set Name( "ProdTarget Main Table" );
-        Log_Debug( "Opened 1280 D1V rows=" || Char( N Rows( dt_main ) ) );
-    ,
-        If( !File Exists( path_1278_d1v_apc ),
-            Throw( "Missing input file: " || path_1278_d1v_apc );
-        );
-        dt_main = Open( path_1278_d1v_apc );
-        dt_main << Set Name( "ProdTarget Main Table" );
-        Log_Debug( "Opened 1278 D1V APC rows=" || Char( N Rows( dt_main ) ) );
-        If( File Exists( path_1278_f32 ),
-            dt2 = Open( path_1278_f32 );
-            dt_main << Concatenate( dt2, Append to First Table );
-            Log_Debug( "Concatenated F32 rows=" || Char( N Rows( dt2 ) ) || " | combined=" || Char( N Rows( dt_main ) ) );
-            dt2 << Close Window;
-        ,
-            Log_Debug( "F32 file missing, proceeding with D1V APC only" );
+    If( !File Exists( path_1280_karc_d1v ),
+        Throw( "Missing input file: " || path_1280_karc_d1v );
+    );
+    dt_main = Open( path_1280_karc_d1v );
+    dt_main << Set Name( "ProdTarget Main Table" );
+    Log_Debug( "Opened 1280 KARC D1V rows=" || Char( N Rows( dt_main ) ) );
+
+    metric_cfg = Resolve_Metric_Config_For_Table( dt_main, metric_cfg );
+    current_metric_cfg = metric_cfg;
+    Log_Debug(
+        "METRIC COLUMNS RESOLVED | mode=" || metric_cfg["mode"] ||
+        " | dtt_col=" || metric_cfg["dtt_value_col"] ||
+        " | wafer_col=" || metric_cfg["wafer_value_col"] ||
+        " | target_col=" || metric_cfg["target_value_col"]
+    );
+
+    // Build derived PG_MOP_PILOT before dynamic filter column lookup.
+    Build_PG_MOP_PILOT_Column( dt_main );
+    Log_Debug( "Built PG_MOP_PILOT on main table rows=" || Char( N Rows( dt_main ) ) );
+
+    pilot_list_norm = {};
+    For( i = 1, i <= N Items( pilot_list ), i++,
+        pilot_token = Uppercase( Trim( Char( pilot_list[i] ) ) );
+        If( pilot_token != "" & !Contains( pilot_list_norm, pilot_token ),
+            Insert Into( pilot_list_norm, pilot_token );
         );
     );
 
-    // Pilot list filter
-    dt_main << Select Where( !Contains( pilot_list, Char( :PROD_MOP_PILOT ) ) );
+    // Pilot list filter using explicit column branches for row-wise expression evaluation.
+    If( filter_column == "PG_MOP_PILOT",
+        dt_main << Select Where( !Contains( pilot_list_norm, Uppercase( Trim( Char( :PG_MOP_PILOT ) ) ) ) );
+    ,
+        dt_main << Select Where( !Contains( pilot_list_norm, Uppercase( Trim( Char( :PROD_MOP_PILOT ) ) ) ) );
+    );
     dt_main << Delete Rows;
     dt_main << Clear Select;
-    Log_Debug( "After pilot filter rows=" || Char( N Rows( dt_main ) ) );
+    Log_Debug( "After " || filter_column || " filter rows=" || Char( N Rows( dt_main ) ) );
 
     If( N Rows( dt_main ) == 0,
-        Throw( "No rows remain after PROD_MOP_PILOT filtering." );
+        Throw( "No rows remain after " || filter_column || " filtering." );
     );
 
-    // Optional layer filter (WEC_LAYER)
-    If( N Items( layer_filter_list ) > 0,
-        dt_main << Select Where( !Contains( layer_filter_list, Char( :WEC_LAYER ) ) );
-        dt_main << Delete Rows;
-        dt_main << Clear Select;
-        Log_Debug( "After layer filter rows=" || Char( N Rows( dt_main ) ) );
-    );
+    // Required structure filter
+    dt_main << Select Where( Char( :STRUCTURE ) != selected_structure );
+    dt_main << Delete Rows;
+    dt_main << Clear Select;
+    Log_Debug( "After structure filter rows=" || Char( N Rows( dt_main ) ) );
 
     If( N Rows( dt_main ) == 0,
-        Throw( "No rows remain after layer filtering." );
+        Throw( "No rows remain after STRUCTURE filtering." );
     );
 
     // SPC-mode handling consistent with fleet script behavior
@@ -1072,27 +1398,13 @@ Build_Prod_Targeting = Function(
     );
 
     // Target regime filtering (ANY target change boundary)
-    Apply_Target_Regime_Filter( dt_main );
+    Apply_Target_Regime_Filter( dt_main, metric_cfg );
 
     If( N Rows( dt_main ) == 0,
         Throw( "No rows remain after TARGET_REGIME_LATEST filtering." );
     );
 
-    // Optional 45-day lookback (unless full history requested)
-    If( include_full_history != 1,
-        max_ts = Col Max( :DATA_COLLECTION_TIME );
-        If( !Is Missing( max_ts ),
-            cutoff_ts = max_ts - In Days( 45 );
-            dt_main << Select Where( Is Missing( :DATA_COLLECTION_TIME ) | :DATA_COLLECTION_TIME < cutoff_ts );
-            dt_main << Delete Rows;
-            dt_main << Clear Select;
-            Log_Debug( "After lookback rows=" || Char( N Rows( dt_main ) ) );
-        );
-    );
-
-    If( N Rows( dt_main ) == 0,
-        Throw( "No rows remain after lookback filtering." );
-    );
+    Log_Debug( "Full current 1280 KARC CSV scope enabled (no layer/history filter)." );
 
     Build_Site_Prod_Mop_Pilot_Column( dt_main );
     Log_Debug( "Built SITE_PROD_MOP_PILOT on main table rows=" || Char( N Rows( dt_main ) ) );
@@ -1110,47 +1422,70 @@ Build_Prod_Targeting = Function(
     );
 
     dt_main << Set Name( "ProdTarget Main Table" );
+    dt_main_review = dt_main;
 
-    limit_config = Build_Limit_Config( dt_main );
-    discovered_layers = Associative Array( Column( dt_main, by_col ) ) << Get Keys;
-    Sort List( discovered_layers );
+    limit_config = Build_Limit_Config( dt_main, metric_cfg );
+    discovered_pilots = Associative Array( Column( dt_main, pilot_col ) ) << Get Keys;
+    Sort List( discovered_pilots );
 
-    If( N Items( discovered_layers ) == 0,
-        Throw( "No layers discovered after primary filtering." );
+    If( N Items( discovered_pilots ) == 0,
+        Throw( "No PROD_MOP_PILOT values discovered after primary filtering." );
     );
 
-    Log_Debug( "Discovered layers=" || Char( discovered_layers ) );
+    Log_Debug( "Discovered pilots=" || Char( discovered_pilots ) );
 
-    export_path = Export_AMCT_Target_Lines( dt_main, report_output_dir );
-    If( export_path != "",
-        Log_Debug( "AMCT target CSV ready | " || export_path )
-    );
-
-    combined_window_title = "sDTT PROD TARGETING - " || tech_str || " - " || pilot_summary;
+    combined_window_title = "sDTT PROD TARGETING - " || current_tech_str || " - " || metric_cfg["mode"] || " - STRUCTURE=" || selected_structure || " - " || pilot_summary;
 
     Build_Combined_Report_Window(
         dt_main,
         combined_window_title,
         limit_config,
-        discovered_layers,
-        include_site_group
+        discovered_pilots,
+        selected_structure,
+        metric_cfg
     );
     last_combined_window_title = combined_window_title;
 
-    Log_Debug( "COMPLETE. Main rows=" || Char( N Rows( dt_main ) ) || " | Layers=" || Char( N Items( discovered_layers ) ) );
+    Log_Debug( "COMPLETE. Main rows=" || Char( N Rows( dt_main ) ) || " | Pilots=" || Char( N Items( discovered_pilots ) ) );
     Flush_Debug_Log();
-    Show( "Prod targeting report generated. Main rows: ", N Rows( dt_main ), "  Layers: ", N Items( discovered_layers ) );
+    Show( "Prod targeting report generated. Main rows: ", N Rows( dt_main ), "  Pilots: ", N Items( discovered_pilots ) );
 );
 
 // ============================================================
 // DIALOG
 // ============================================================
+
+Export_Target_CSV_Dialog_Action = Function( {},
+    If( Type( current_metric_cfg ) == "Associative Array",
+        dt_export_source = .;
+
+        If( Try( N Rows( dt_main_review ); 1, 0 ) == 1,
+            dt_export_source = dt_main_review;
+        );
+
+        If( !Is Scriptable( dt_export_source ),
+            Try( dt_export_source = Data Table( "ProdTarget Main Table" ) );
+        );
+
+        If( Is Scriptable( dt_export_source ),
+            export_path = Export_AMCT_Target_Lines( dt_export_source, karc_prod_targeting_output_dir, current_metric_cfg );
+        ,
+            Throw( "No export source table available (ProdTarget Main Table missing)." );
+        );
+
+        If( export_path != "",
+            Show( "Target CSV exported successfully:" || Char( 10 ) || export_path );
+            Log_Debug( "USER EXPORT | AMCT target CSV | " || export_path );
+        ,
+            Show( "Export failed. Check debug log." );
+        );
+    ,
+        Show( "No data table/metric mode available. Generate report first." );
+    );
+);
+
 dialog_window = New Window( "sDTT Prod Targeting Report Options",
     V List Box(
-
-        Panel Box( "PROCESS",
-            rb_process = Radio Box( {"1278 (D1V + F32)", "1280 (D1V)"} )
-        ),
 
         Panel Box( "PROD_MOP_PILOT INPUT",
             V List Box(
@@ -1159,41 +1494,100 @@ dialog_window = New Window( "sDTT Prod Targeting Report Options",
             )
         ),
 
-        Panel Box( "OPTIONAL LAYER FILTER",
+        Panel Box( "PG_MOP_PILOT INPUT",
             V List Box(
-                Text Box( "WEC_LAYER list (comma separated), blank = all layers:" ),
-                layer_input_tb = Text Edit Box( "", << Set Width( 500 ) )
+                Text Box( "Or enter PG_MOP_PILOT values (comma or newline separated):" ),
+                pg_mop_pilot_input_tb = Text Edit Box( "", << Set Width( 700 ), << Set Height( 120 ) )
+            )
+        ),
+
+        Panel Box( "STRUCTURE (Required)",
+            V List Box(
+                Text Box( "Select one STRUCTURE:" ),
+                struct_cb = Combo Box( allowed_structures )
+            )
+        ),
+
+        Panel Box( "TARGET METRIC",
+            V List Box(
+                Text Box( "Retarget using:" ),
+                rb_metric_mode = Radio Box( {"MEAN", "SIGMA"}, 1 )
             )
         ),
 
         Panel Box( "OPTIONS",
             V List Box(
                 cb_close_reports = Check Box( "Close open report windows", 1 ),
-                cb_include_full_history = Check Box( "Include full history (otherwise last 45 days)", 0 ),
-                cb_spc_mode = Check Box( "SPC mode (keep DYNWAFER_001 only)", 0 ),
-                cb_include_site_group = Check Box( "Show third column: Trend by SITE group", 1 )
+                cb_spc_mode = Check Box( "SPC mode (keep DYNWAFER_001 only)", 0 )
             )
         ),
 
         H List Box(
             Button Box( "Generate Report",
-                pilots = Parse_Pilot_List( pilot_input_tb << Get Text );
-                layers = Parse_Layer_List( layer_input_tb << Get Text );
-                val_tech_str = If( (rb_process << Get) == 2, "1280", "1278" );
+                pilot_text = pilot_input_tb << Get Text;
+                pg_mop_pilot_text = pg_mop_pilot_input_tb << Get Text;
+
+                If( pilot_text != "" & pg_mop_pilot_text != "",
+                    Throw( "Please provide EITHER PROD_MOP_PILOT values OR PG_MOP_PILOT values, not both." );
+                );
+
+                filter_column = "PROD_MOP_PILOT";
+                pilots = {};
+
+                If( pilot_text != "",
+                    pilots = Parse_Pilot_List( pilot_text );
+                    filter_column = "PROD_MOP_PILOT";
+                );
+
+                If( pg_mop_pilot_text != "",
+                    pilots = Parse_Pilot_List( pg_mop_pilot_text );
+                    filter_column = "PG_MOP_PILOT";
+                );
 
                 If( N Items( pilots ) == 0,
-                    Throw( "Please provide at least one PROD_MOP_PILOT value." );
+                    Throw( "Please provide at least one pilot value." );
                 );
+
+                selected_structure_raw = struct_cb << Get;
+                selected_structure = "";
+
+                // Combo Box returns index in some JMP contexts; resolve to displayed text.
+                If( Is Number( selected_structure_raw ),
+                    If( selected_structure_raw >= 1 & selected_structure_raw <= N Items( allowed_structures ),
+                        selected_structure = allowed_structures[selected_structure_raw];
+                    );
+                ,
+                    selected_structure = Trim( Char( selected_structure_raw ) );
+                );
+
+                Log_Debug( "STRUCTURE RAW=" || Char( selected_structure_raw ) || " | RESOLVED=" || selected_structure );
+
+                If( selected_structure == "",
+                    Throw( "Please select one STRUCTURE." );
+                );
+
+                metric_selection_raw = rb_metric_mode << Get;
+                metric_selection = "MEAN";
+                If( Is Number( metric_selection_raw ),
+                    If( metric_selection_raw == 2,
+                        metric_selection = "SIGMA";
+                    );
+                ,
+                    metric_selection = Uppercase( Trim( Char( metric_selection_raw ) ) );
+                    If( metric_selection != "SIGMA",
+                        metric_selection = "MEAN";
+                    );
+                );
+                Log_Debug( "METRIC RAW=" || Char( metric_selection_raw ) || " | RESOLVED=" || metric_selection );
 
                 Build_Prod_Targeting(
                     pilots,
-                    cb_include_full_history << Get,
+                    selected_structure,
+                    metric_selection,
+                    filter_column,
                     cb_spc_mode << Get,
-                    cb_include_site_group << Get,
-                    layers,
                     cb_close_reports << Get,
-                    dialog_window,
-                    val_tech_str
+                    dialog_window
                 );
             ),
 

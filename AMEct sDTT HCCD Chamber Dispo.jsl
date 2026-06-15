@@ -116,6 +116,83 @@ Debug_Trace = Function( {msg},
     );
 );
 
+// ============================================================
+// APPLY_TARGET_REGIME_FILTER
+// Retains only rows in the most recent continuous target regime
+// for each PROD_MOP_PILOT group.
+// Requires: PROD_MOP_PILOT, DATA_COLLECTION_TIME, ALLSTATS_MEAN_TARGET_VALUE
+// ============================================================
+Apply_Target_Regime_Filter = Function( {dt},
+    dt << Sort(
+        By( :PROD_MOP_PILOT, :DATA_COLLECTION_TIME ),
+        Order( Ascending, Ascending ),
+        Replace Table,
+        Output Table( "" )
+    );
+
+    If( Try( Column( dt, "TARGET_GROUP_KEY" ); 1, 0 ) == 0,
+        dt << New Column( "TARGET_GROUP_KEY", Character, Formula( Char( :PROD_MOP_PILOT ) ) );
+    ,
+        Column( dt, "TARGET_GROUP_KEY" ) << Delete Formula;
+        Column( dt, "TARGET_GROUP_KEY" ) << Set Each Value( Char( :PROD_MOP_PILOT ) );
+    );
+
+    If( Try( Column( dt, "TARGET_REGIME_LATEST" ); 1, 0 ) == 0,
+        dt << New Column( "TARGET_REGIME_LATEST", Numeric, Continuous, Format( "Best", 8 ), Set Each Value( 0 ) );
+    ,
+        Column( dt, "TARGET_REGIME_LATEST" ) << Delete Formula;
+        Column( dt, "TARGET_REGIME_LATEST" ) << Set Each Value( 0 );
+    );
+
+    unique_keys = Associative Array( dt:TARGET_GROUP_KEY ) << Get Keys;
+    Debug_Trace( "Target regime filter: groups=" || Char( N Items( unique_keys ) ) );
+
+    For( k = 1, k <= N Items( unique_keys ), k++,
+        gkey = unique_keys[k];
+        rows = dt << Get Rows Where( :TARGET_GROUP_KEY == gkey );
+        If( N Items( rows ) == 0, Continue() );
+
+        n = N Items( rows );
+        last_row = rows[n];
+        last_tgt = Num( dt:ALLSTATS_MEAN_TARGET_VALUE[last_row] );
+
+        If( Is Missing( last_tgt ),
+            For( j = 1, j <= n, j++,
+                dt:TARGET_REGIME_LATEST[rows[j]] = 1;
+            );
+            Debug_Trace( "REGIME " || gkey || " | last target missing, kept all " || Char( n ) || " rows" );
+            Continue();
+        );
+
+        regime_start = n;
+        While( regime_start > 1,
+            prev_tgt = Num( dt:ALLSTATS_MEAN_TARGET_VALUE[rows[regime_start - 1]] );
+            If( Is Missing( prev_tgt ) | prev_tgt != last_tgt,
+                Break();
+            );
+            regime_start = regime_start - 1;
+        );
+
+        For( j = regime_start, j <= n, j++,
+            dt:TARGET_REGIME_LATEST[rows[j]] = 1;
+        );
+
+        Debug_Trace(
+            "REGIME " || gkey ||
+            " | last target=" || Char( last_tgt ) ||
+            " | kept=" || Char( n - regime_start + 1 ) ||
+            " | dropped=" || Char( regime_start - 1 )
+        );
+    );
+
+    before_rows = N Rows( dt );
+    dt << Select Where( :TARGET_REGIME_LATEST != 1 );
+    dt << Delete Rows;
+    dt << Clear Select;
+    Debug_Trace( "Target regime filter complete. Before=" || Char( before_rows ) || " | After=" || Char( N Rows( dt ) ) );
+    dt;
+);
+
 Append_Copy_Button = Function({config, layer_name, button_label, copy_target, debug_tag, panel_key = "MEAN"},
     use_sigma_panel = Uppercase( Char( panel_key ) ) == "SIGMA";
 
@@ -595,7 +672,7 @@ Format_Variability_Charts = Function({var_chart_object, stat, type, xcol, config
 // ============================================================
 // MAIN DATA PROCESSING FUNCTION
 // ============================================================
-ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, chamber_list, selected_member, val_include_sigma, val_no_splines, val_dataset, val_site, val_apc_suc_only, val_include_full_history, dlg_win},
+ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, chamber_list, selected_member, val_include_sigma, val_no_splines, val_dataset, val_site, val_apc_suc_only, val_include_full_history, val_apc_model, dlg_win, val_current_target_only = 0},
     
     // Derive dataset label for use in titles
     tech_str = If(val_dataset == 1, "1278", "1280");
@@ -715,11 +792,30 @@ ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, cha
         dt << Clear Select;
     );
 
+    // ---- Target regime filter (current target only) ----
+    If( val_current_target_only == 1,
+        Apply_Target_Regime_Filter( dt );
+    );
+
     // Filter to APC feedback success rows only (APC_FB_SUC == 1)
     If(val_apc_suc_only == 1,
         dt << Select Where(:APC_FB_SUC != 1);
         dt << Delete Rows;
         dt << Clear Select;
+    );
+
+    // Filter by APC MODEL selection.
+    // 1 = All Models (no filter), 2 = AMECT_ICCR2 only, 3 = MFGAMECT_FLOW_TEMP only.
+    If( val_apc_model == 2,
+        dt << Select Where( :APC_AREA != "AMECT_ICCR2" );
+        dt << Delete Rows;
+        dt << Clear Select;
+    ,
+        If( val_apc_model == 3,
+            dt << Select Where( :APC_AREA != "MFGAMECT_FLOW_TEMP" );
+            dt << Delete Rows;
+            dt << Clear Select;
+        );
     );
 
     // Shared x-axis window for all time-trend charts (MEAN/APC/SIGMA).
@@ -1039,6 +1135,8 @@ Run_Generate_Report = Function( {},
     val_include_sigma = cb_include_sigma << Get;
     val_no_splines = cb_no_splines << Get;
     val_apc_suc_only = cb_apc_suc_only << Get;
+    val_current_target_only = cb_current_target_only << Get;
+    val_apc_model = rbApcModel << Get;
     val_dataset_choice = rbDataset << Get;
     If( val_dataset_choice == 1,
         val_dataset = 1;
@@ -1107,7 +1205,7 @@ Run_Generate_Report = Function( {},
 
     // Call the data processing function
     Try(
-        ProcessSDTTData(val_cb_close_reports_and_windows, val_data_type, chamber_list, selected_member, val_include_sigma, val_no_splines, val_dataset, val_site, val_apc_suc_only, val_include_full_history, dialog_window);
+        ProcessSDTTData(val_cb_close_reports_and_windows, val_data_type, chamber_list, selected_member, val_include_sigma, val_no_splines, val_dataset, val_site, val_apc_suc_only, val_include_full_history, val_apc_model, dialog_window, val_current_target_only);
         Debug_Trace( "Run_Generate_Report click success" );
     ,
         Debug_Trace( "Run_Generate_Report click failure" );
@@ -1188,6 +1286,12 @@ dialog_window = New Window( "SDTT Report Options",
                                 cb_include_sigma = Check Box( "Include Sigma Charts" ),
                                 cb_no_splines = Check Box( "No Splines" ),
                                 cb_apc_suc_only = Check Box( "APC_FB_SUC=1" ),
+                                cb_current_target_only = Check Box( "Current Target Only" ),
+                            ),
+                        ),
+                        Panel Box("APC MODEL",
+                            rbApcModel = Radio Box(
+                                {"All Models", "AMECT_ICCR2", "MFGAMECT_FLOW_TEMP"}
                             ),
                         ),
                         Panel Box("DATA TYPE",

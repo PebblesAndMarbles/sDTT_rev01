@@ -91,6 +91,12 @@ PIPELINE_CONFIG = {
     # Operations that require strict AREA+B_TOOL pre-query before accepting APC match.
     # MT5H (op 263067) needs this to avoid false empty matches from cascading fallback.
     'require_area_btool_for_match_ops': ['263067'],
+    # Enforce strict AREA+B_TOOL qualification specifically at FLOW_TEMP tier
+    # for all operations before accepting a tier match.
+    'require_area_btool_for_flow_temp': True,
+    # PM-safe filtering for split-chamber lot APC rows (prevents PM-token flipping).
+    # LOCKED IN: Always enabled to ensure SUBENTITY consistency across all pipeline runs.
+    'use_subentity_pm_match': True,
 
     # ── Console verbosity ──────────────────────────────────────────────
     # progress_only = True  → terminal shows only Site / Layer / Chunk / CD
@@ -260,6 +266,24 @@ def parse_args(argv=None) -> argparse.Namespace:
              'whose DATA_COLLECTION_TIME is within the last N days, while keeping '
              'the full source CSV in output.')
     parser.add_argument(
+        '--apc-query-key-manifest', type=str, default=None, dest='apc_query_key_manifest',
+        help='Used with --apc-only: path to key-manifest CSV (WAFER_ID and optional '
+             'WEC_OPERATION) for targeted APC re-query.')
+    parser.add_argument(
+        '--apc-output-mode', choices=['full', 'patch'], default='full', dest='apc_output_mode',
+        help="Used with --apc-only: APC output mode. 'full' writes standard _APC CSV; "
+             "'patch' writes sidecar patch rows for later merge.")
+    parser.add_argument(
+        '--apc-patch-output-dir', type=str, default=None, dest='apc_patch_output_dir',
+        help='Used with --apc-only and --apc-output-mode patch: output directory for '
+             'site-specific APC patch CSVs.')
+    parser.add_argument(
+        '--apc-query-batch-id', type=str, default=None, dest='apc_query_batch_id',
+        help='Optional batch identifier propagated into APC patch output metadata.')
+    parser.add_argument(
+        '--use-subentity-pm-match', action='store_true', dest='use_subentity_pm_match',
+        help='Enable PM-safe APC filtering (source SUBENTITY PM must match APC SUBENTITY PM).')
+    parser.add_argument(
         '--apc-replace-mt5h', action='store_true', dest='apc_replace_mt5h',
         help='Used with --apc-only: run strict APC logic for MT5H only and replace '
              'corresponding MT5H rows in the production _APC.csv without full backfill.')
@@ -306,6 +330,8 @@ def build_config(args: argparse.Namespace, base_config: dict) -> dict:
     cfg['resume']       = PIPELINE_CONFIG.get('resume', False)
     cfg['apc_query_lookback_days'] = PIPELINE_CONFIG.get('apc_query_lookback_days', None)
     cfg['require_area_btool_for_match_ops'] = PIPELINE_CONFIG.get('require_area_btool_for_match_ops', None)
+    cfg['require_area_btool_for_flow_temp'] = PIPELINE_CONFIG.get('require_area_btool_for_flow_temp', True)
+    cfg['use_subentity_pm_match'] = PIPELINE_CONFIG.get('use_subentity_pm_match', False)
 
     # ── Redirect ALL output paths to integrated_output ────────────────────
     # main_csv_path : final per-CD-level CSVs  (e.g. 1278sDTT_HCCD_D1V.csv)
@@ -328,6 +354,8 @@ def build_config(args: argparse.Namespace, base_config: dict) -> dict:
         cfg['log_level'] = args.log_level
     if args.apc_lookback_days is not None:
         cfg['apc_query_lookback_days'] = args.apc_lookback_days
+    if args.use_subentity_pm_match:
+        cfg['use_subentity_pm_match'] = True
 
     return cfg
 
@@ -576,14 +604,27 @@ def main(argv=None) -> None:
                             site=site,
                         )
                     else:
+                        _patch_output = None
+                        if args.apc_output_mode == 'patch' and args.apc_patch_output_dir:
+                            _patch_dir = Path(args.apc_patch_output_dir)
+                            _patch_dir.mkdir(parents=True, exist_ok=True)
+                            _batch = args.apc_query_batch_id or datetime.now().strftime('%Y%m%d_%H%M%S')
+                            _patch_output = str(_patch_dir / f"{base}_HCCD_{site}_APC_PATCH_{_batch}.csv")
+
                         out = apc_mod.run_apc_join(
                             str(apc_csv),
+                            query_key_manifest_path=args.apc_query_key_manifest,
+                            output_mode=args.apc_output_mode,
+                            patch_output_path=_patch_output,
+                            query_batch_id=args.apc_query_batch_id,
                             fill_null_col=args.fill_null_col,
                             apc_debug_minimal=args.apc_debug_minimal,
                             debug_days=args.apc_debug_days,
                             apc_query_lookback_days=args.apc_lookback_days,
                             site=site,
                             require_area_btool_for_match_ops=config.get('require_area_btool_for_match_ops'),
+                            require_area_btool_for_flow_temp=config.get('require_area_btool_for_flow_temp', True),
+                            use_subentity_pm_match=config.get('use_subentity_pm_match', False),
                         )
                     logger.info(f"STEP 2 complete — APC-enriched CSV: {out}")
                     did_any = True

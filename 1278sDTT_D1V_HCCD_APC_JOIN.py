@@ -152,6 +152,95 @@ def _extract_pm_index(subentity_value) -> int:
     return int(m.group(1)) - 1 if m else -1
 
 
+def _extract_pm_token(value):
+    """Extract PM token (e.g. PM5) from a string value; return None when absent."""
+    if pd.isna(value):
+        return None
+    m = _PM_RE.search(str(value))
+    return f"PM{m.group(1)}" if m else None
+
+
+def _build_source_pm_map(df_query: pd.DataFrame) -> dict:
+    """Build {(WAFER_ID, WEC_OPERATION): PMx} map from source SUBENTITY values."""
+    if 'SUBENTITY' not in df_query.columns:
+        return {}
+
+    key_cols = ['WAFER_ID', 'WEC_OPERATION', 'SUBENTITY']
+    src = df_query[key_cols].copy()
+    src['WAFER_ID'] = src['WAFER_ID'].astype(str)
+    src['WEC_OPERATION'] = src['WEC_OPERATION'].astype(str)
+    src['SOURCE_PM'] = src['SUBENTITY'].apply(_extract_pm_token)
+    src = src[src['SOURCE_PM'].notna()].copy()
+    if src.empty:
+        return {}
+
+    # Prefer latest source row when duplicates exist
+    if 'DATA_COLLECTION_TIME' in df_query.columns:
+        src = df_query[['WAFER_ID', 'WEC_OPERATION', 'SUBENTITY', 'DATA_COLLECTION_TIME']].copy()
+        src['WAFER_ID'] = src['WAFER_ID'].astype(str)
+        src['WEC_OPERATION'] = src['WEC_OPERATION'].astype(str)
+        src['SOURCE_PM'] = src['SUBENTITY'].apply(_extract_pm_token)
+        src = src[src['SOURCE_PM'].notna()].copy()
+        src['DATA_COLLECTION_TIME'] = pd.to_datetime(src['DATA_COLLECTION_TIME'], format='mixed', dayfirst=False, errors='coerce')
+        src = src.sort_values('DATA_COLLECTION_TIME', ascending=False)
+
+    src = src.drop_duplicates(subset=['WAFER_ID', 'WEC_OPERATION'], keep='first')
+    return {(r['WAFER_ID'], r['WEC_OPERATION']): r['SOURCE_PM'] for _, r in src.iterrows()}
+
+
+def _apply_subentity_pm_alignment(df_apc_combined: pd.DataFrame, df_query: pd.DataFrame) -> pd.DataFrame:
+    """Filter APC rows so each wafer keeps only APC_DATA_ID rows whose SUBENTITY PM
+    matches the wafer's source SUBENTITY PM for that operation.
+
+    This resolves split-chamber lots where AEPCMC_LOT emits one APC_DATA_ID per PM.
+    """
+    if df_apc_combined.empty:
+        return df_apc_combined
+
+    source_pm_map = _build_source_pm_map(df_query)
+    if not source_pm_map:
+        logger.info("SUBENTITY PM alignment: no source PM map available — skipping")
+        return df_apc_combined
+
+    # Determine APC PM token per APC_DATA_ID from SUBENTITY/SUBENTITIES attributes
+    apc_key_rows = df_apc_combined[
+        df_apc_combined['ATTRIBUTE_NAME'].isin(['SUBENTITY', 'SUBENTITIES'])
+    ][['APC_DATA_ID', 'ATTRIBUTE_NAME', 'ATTRIBUTE_VALUE']].copy()
+    if apc_key_rows.empty:
+        logger.info("SUBENTITY PM alignment: no SUBENTITY/SUBENTITIES APC attributes found — skipping")
+        return df_apc_combined
+
+    # Prefer SUBENTITY over SUBENTITIES when both exist for a given APC_DATA_ID
+    apc_key_rows['prio'] = apc_key_rows['ATTRIBUTE_NAME'].map({'SUBENTITY': 0, 'SUBENTITIES': 1}).fillna(9)
+    apc_key_rows = apc_key_rows.sort_values(['APC_DATA_ID', 'prio'])
+    apc_key_rows['APC_PM'] = apc_key_rows['ATTRIBUTE_VALUE'].apply(_extract_pm_token)
+    apc_pm_map = apc_key_rows.drop_duplicates(subset=['APC_DATA_ID'], keep='first').set_index('APC_DATA_ID')['APC_PM'].to_dict()
+
+    aligned = df_apc_combined.copy()
+    aligned['WAFER_ID'] = aligned['WAFER_ID'].astype(str)
+    aligned['APC_OPERATION'] = aligned['APC_OPERATION'].astype(str)
+    aligned['SOURCE_PM'] = [source_pm_map.get((w, o)) for w, o in zip(aligned['WAFER_ID'], aligned['APC_OPERATION'])]
+    aligned['APC_PM'] = aligned['APC_DATA_ID'].map(apc_pm_map)
+
+    # Keep row when source PM unknown or APC PM unknown, or PMs match.
+    # Drop only definitive mismatches.
+    keep_mask = (
+        aligned['SOURCE_PM'].isna() |
+        aligned['APC_PM'].isna() |
+        (aligned['SOURCE_PM'] == aligned['APC_PM'])
+    )
+
+    before = len(aligned)
+    dropped = int((~keep_mask).sum())
+    aligned = aligned[keep_mask].copy()
+    logger.info(
+        f"SUBENTITY PM alignment: kept {len(aligned)} / {before} APC rows; "
+        f"dropped {dropped} source-vs-APC PM mismatches"
+    )
+
+    return aligned.drop(columns=['SOURCE_PM', 'APC_PM'])
+
+
 def apply_ube_subentity_extraction(df_final):
     """
     For rows where APC_AREA == '8AMEUBE', the columns APC_B_TOOL, APC_B_TOOL_RS
@@ -368,6 +457,7 @@ def try_apc_system_with_area_cascade(
     chunk_id,
     minimal_mode=False,
     require_area_btool_for_match=False,
+    require_area_btool_for_flow_temp=True,
     site='D1V',
 ):
     """Cascade through area tiers for remaining wafers within one APC system."""
@@ -409,7 +499,12 @@ def try_apc_system_with_area_cascade(
             if len(df_result) == 0:
                 continue
 
-            if require_area_btool_for_match:
+            _strict_this_tier = (
+                require_area_btool_for_match or
+                (require_area_btool_for_flow_temp and area_name == 'MFGAMECT_FLOW_TEMP')
+            )
+
+            if _strict_this_tier:
                 # Compute matched wafers FIRST.  Only wafers with both AREA and B_TOOL
                 # non-null at this tier qualify.  Rows for unmatched wafers (e.g.,
                 # FLOW_TEMP returns AREA but no B_TOOL for MT5H) are discarded here so
@@ -443,6 +538,7 @@ def process_chunk_cascading_priority(
     chunk_id,
     minimal_mode=False,
     require_area_btool_for_match=False,
+    require_area_btool_for_flow_temp=True,
     site='D1V',
 ):
     """Process chunk with cascading area filters and APC system priority"""
@@ -469,6 +565,7 @@ def process_chunk_cascading_priority(
             chunk_id,
             minimal_mode=minimal_mode,
             require_area_btool_for_match=require_area_btool_for_match,
+            require_area_btool_for_flow_temp=require_area_btool_for_flow_temp,
             site=site,
         )
 
@@ -491,6 +588,7 @@ def process_chunk_cascading_priority(
                 chunk_id,
                 minimal_mode=minimal_mode,
                 require_area_btool_for_match=require_area_btool_for_match,
+                require_area_btool_for_flow_temp=require_area_btool_for_flow_temp,
                 site=site,
             )
 
@@ -636,8 +734,14 @@ def main_cascading_area_priority_final(
     apc_debug_minimal=False,
     debug_days=3,
     apc_query_lookback_days=None,
+    query_key_manifest_path=None,
+    output_mode='full',
+    patch_output_path=None,
+    query_batch_id=None,
     debug_output_suffix='_APC_DEBUG_MINIMAL',
     require_area_btool_for_match_ops=None,
+    require_area_btool_for_flow_temp=True,
+    use_subentity_pm_match=False,
     site='D1V',
 ):
     """
@@ -660,6 +764,10 @@ def main_cascading_area_priority_final(
         Useful for targeted backfills (e.g. fill_null_col='APC_B_TOOL').
     """
     # Configuration
+    output_mode = str(output_mode).strip().lower()
+    if output_mode not in {'full', 'patch'}:
+        raise ValueError(f"Unsupported output_mode '{output_mode}'. Use 'full' or 'patch'.")
+
     if input_file is None:
         input_file = r"\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\debug\1278sDTT_HCCD_D1V.csv"
     _site_cfg = _get_site_cfg(site)
@@ -731,6 +839,49 @@ def main_cascading_area_priority_final(
             logger.warning(f"Null-fill: no existing APC CSV at {_existing_apc_path} "
                            "— falling back to full-file mode")
             df_query = df_input
+    elif query_key_manifest_path is not None and Path(query_key_manifest_path).exists():
+        logger.info(f"Key-manifest mode — query keys: {query_key_manifest_path}")
+        _key_df = pd.read_csv(query_key_manifest_path)
+        if 'WAFER_ID' not in _key_df.columns:
+            raise ValueError("query_key_manifest_path is missing required column 'WAFER_ID'")
+
+        _key_df['WAFER_ID'] = _key_df['WAFER_ID'].astype(str)
+        if 'WEC_OPERATION' in _key_df.columns and 'WEC_OPERATION' in df_input.columns:
+            _key_df['WEC_OPERATION'] = _key_df['WEC_OPERATION'].astype(str)
+            _pairs = set(zip(_key_df['WAFER_ID'], _key_df['WEC_OPERATION']))
+            df_query = df_input[
+                [(str(w), str(o)) in _pairs for w, o in zip(df_input['WAFER_ID'], df_input['WEC_OPERATION'])]
+            ].copy()
+            logger.info(f"Key manifest pairs: {len(_pairs)}")
+        else:
+            _wafer_ids = set(_key_df['WAFER_ID'].astype(str).unique())
+            df_query = df_input[df_input['WAFER_ID'].astype(str).isin(_wafer_ids)].copy()
+            logger.info(f"Key manifest wafers: {len(_wafer_ids)}")
+
+        logger.info(f"Filtered to {len(df_query)} rows for APC querying ({len(df_input)} total in source CSV)")
+
+        if output_mode == 'full' and _existing_apc_path.exists():
+            logger.info(f"Loading existing APC CSV for key-manifest full merge: {_existing_apc_path}")
+            df_existing_apc = pd.read_csv(_existing_apc_path)
+            _before_drop = len(df_existing_apc)
+            if 'WEC_OPERATION' in _key_df.columns and 'WEC_OPERATION' in df_existing_apc.columns:
+                _pairs = set(zip(_key_df['WAFER_ID'].astype(str), _key_df['WEC_OPERATION'].astype(str)))
+                _drop_mask = pd.Series(
+                    [(str(w), str(o)) in _pairs for w, o in zip(df_existing_apc['WAFER_ID'], df_existing_apc['WEC_OPERATION'])],
+                    index=df_existing_apc.index,
+                )
+                df_existing_apc = df_existing_apc[~_drop_mask].reset_index(drop=True)
+            else:
+                _wafer_ids = set(_key_df['WAFER_ID'].astype(str).unique())
+                df_existing_apc = df_existing_apc[
+                    ~df_existing_apc['WAFER_ID'].astype(str).isin(_wafer_ids)
+                ].reset_index(drop=True)
+            logger.info(f"Retained {len(df_existing_apc)} existing APC rows (dropped {_before_drop - len(df_existing_apc)} for re-fetch)")
+        elif output_mode == 'full':
+            logger.info("No existing APC CSV found for key-manifest full merge — output will contain queried rows only")
+    elif query_key_manifest_path is not None:
+        logger.warning(f"Key manifest file not found: {query_key_manifest_path} — falling back to full-file mode")
+        df_query = df_input
     elif wafer_manifest_path is not None and Path(wafer_manifest_path).exists():
         logger.info(f"Incremental mode — run manifest: {wafer_manifest_path}")
         _manifest_df = pd.read_csv(wafer_manifest_path)
@@ -810,15 +961,18 @@ def main_cascading_area_priority_final(
             )
 
 
+    # For patch mode, merge only queried rows. For full mode, preserve historical behavior.
+    _base_merge_df = df_query if output_mode == 'patch' else df_input
+
     # For F32, filter to only rows with MODEL == 'MFGAMECT_FLOW_TEMP' for APC enrichment
-    if is_f32 and 'MODEL' in df_input.columns:
-        mask_model = df_input['MODEL'] == apc_model_constraint
-        df_input_f32_model = df_input[mask_model].copy()
-        df_input_f32_other = df_input[~mask_model].copy()
+    if is_f32 and 'MODEL' in _base_merge_df.columns:
+        mask_model = _base_merge_df['MODEL'] == apc_model_constraint
+        df_input_f32_model = _base_merge_df[mask_model].copy()
+        df_input_f32_other = _base_merge_df[~mask_model].copy()
         logger.info(f"F32: {len(df_input_f32_model)} rows with MODEL == '{apc_model_constraint}', {len(df_input_f32_other)} rows with other models.")
     else:
-        df_input_f32_model = df_input
-        df_input_f32_other = pd.DataFrame(columns=df_input.columns)
+        df_input_f32_model = _base_merge_df
+        df_input_f32_other = pd.DataFrame(columns=_base_merge_df.columns)
 
     # Ensure F32 APC query scope only includes the target model.
     if is_f32 and 'MODEL' in df_query.columns:
@@ -837,6 +991,10 @@ def main_cascading_area_priority_final(
     conn = PyUber.connect(database_connection)
 
     _strict_ops = set(str(x) for x in (require_area_btool_for_match_ops or []))
+    if require_area_btool_for_flow_temp:
+        logger.info(
+            "FLOW_TEMP strict tier enabled: wafers only match at MFGAMECT_FLOW_TEMP when AREA and B_TOOL are both non-null"
+        )
     if _strict_ops:
         logger.info(
             "Strict match mode enabled for operations (requires non-null AREA and B_TOOL): "
@@ -891,6 +1049,7 @@ def main_cascading_area_priority_final(
                     chunk_id,
                     minimal_mode=apc_debug_minimal,
                     require_area_btool_for_match=_strict_this_operation,
+                    require_area_btool_for_flow_temp=require_area_btool_for_flow_temp,
                     site=site,
                 )
                 chunk_time = datetime.now() - chunk_start
@@ -941,6 +1100,10 @@ def main_cascading_area_priority_final(
         logger.info("Combining all results...")
         df_apc_combined = pd.concat(all_results, ignore_index=True)
         logger.info(f"Combined APC data: {len(df_apc_combined)} total records")
+
+        if use_subentity_pm_match:
+            logger.info("Applying SUBENTITY PM alignment for split-chamber lot APC rows...")
+            df_apc_combined = _apply_subentity_pm_alignment(df_apc_combined, df_query)
 
         # ── Deduplicate: keep one row per (WAFER_ID, APC_OPERATION, ATTRIBUTE_NAME) ──
         # Prefer most-recent TXN_DATE so the freshest APC record wins.
@@ -1077,9 +1240,23 @@ def main_cascading_area_priority_final(
         else:
             logger.warning("APC dedup skipped: missing one or more columns (WEC_LAYER, SPC_LOT, WID)")
 
+        # Add trace fields in patch mode for deterministic fold-in auditing.
+        if output_mode == 'patch':
+            _batch = query_batch_id if query_batch_id is not None else datetime.now().strftime('%Y%m%d_%H%M%S')
+            df_final['APC_QUERY_MODE'] = 'patch'
+            df_final['APC_QUERY_BATCH_ID'] = str(_batch)
+            df_final['APC_QUERY_TIMESTAMP'] = datetime.now().isoformat(timespec='seconds')
+            df_final['APC_QUERY_SITE'] = str(site).upper()
+
         # [rest of the unchanged code for saving, logging, and returning df_final]
         input_path = Path(input_file)
-        if apc_debug_minimal:
+        if output_mode == 'patch':
+            if patch_output_path is not None:
+                output_file = Path(patch_output_path)
+            else:
+                _batch = query_batch_id if query_batch_id is not None else datetime.now().strftime('%Y%m%d_%H%M%S')
+                output_file = input_path.parent / (input_path.stem + f'_APC_PATCH_{_batch}' + input_path.suffix)
+        elif apc_debug_minimal:
             output_file = input_path.parent / (input_path.stem + debug_output_suffix + input_path.suffix)
         else:
             output_file = input_path.parent / (input_path.stem + '_APC' + input_path.suffix)
@@ -1152,12 +1329,18 @@ def main_cascading_area_priority_final(
 def run_apc_join(
     input_csv_path: str,
     wafer_manifest_path: str = None,
+    query_key_manifest_path: str = None,
+    output_mode: str = 'full',
+    patch_output_path: str = None,
+    query_batch_id: str = None,
     fill_null_col: str = None,
     apc_debug_minimal: bool = False,
     debug_days: int = 3,
     apc_query_lookback_days: int = None,
     debug_output_suffix: str = '_APC_DEBUG_MINIMAL',
     require_area_btool_for_match_ops=None,
+    require_area_btool_for_flow_temp: bool = True,
+    use_subentity_pm_match: bool = False,
     site: str = 'D1V',
 ) -> str:
     """
@@ -1179,6 +1362,17 @@ def run_apc_join(
     fill_null_col : str, optional
         When set, only re-query wafers where this APC column is null in the
         existing _APC.csv (e.g. 'APC_B_TOOL').  Non-null rows are retained.
+    query_key_manifest_path : str, optional
+        Path to a key manifest CSV for targeted APC re-query. Supports
+        required column WAFER_ID and optional column WEC_OPERATION.
+    output_mode : str, optional
+        Output mode: 'full' (default) writes standard _APC output behavior,
+        'patch' writes only queried-key sidecar output for later fold-in.
+    patch_output_path : str, optional
+        Output path for patch mode. When omitted, a timestamped
+        *_APC_PATCH_<batch>.csv is written beside input_csv_path.
+    query_batch_id : str, optional
+        Optional batch identifier for patch traceability.
     apc_debug_minimal : bool, optional
         When True, run a minimal debug APC pull (AREA + B_TOOL) over recent
         source rows and save to a separate debug APC output file.
@@ -1195,6 +1389,14 @@ def run_apc_join(
         operations, a wafer is considered matched at a given area only when
         both AREA and B_TOOL are non-null, otherwise it continues to lower
         area retry tiers.
+    require_area_btool_for_flow_temp : bool, optional
+        When True (default), applies strict AREA+B_TOOL match qualification
+        specifically at the MFGAMECT_FLOW_TEMP tier for all operations.
+    use_subentity_pm_match : bool, optional
+        When True, aligns APC rows by PM token so each wafer keeps only
+        APC_DATA_ID records whose SUBENTITY PM matches source SUBENTITY PM.
+        Useful for split-chamber lots where AEPCMC_LOT emits one APC_DATA_ID
+        per PM.
     site : str, optional
         Site selector for APC query context (default: 'D1V'). Supported:
         'D1V', 'F32'.
@@ -1214,18 +1416,29 @@ def run_apc_join(
     result_df = main_cascading_area_priority_final(
         input_file=input_csv_path,
         wafer_manifest_path=wafer_manifest_path,
+        query_key_manifest_path=query_key_manifest_path,
+        output_mode=output_mode,
+        patch_output_path=patch_output_path,
+        query_batch_id=query_batch_id,
         fill_null_col=fill_null_col,
         apc_debug_minimal=apc_debug_minimal,
         debug_days=debug_days,
         apc_query_lookback_days=apc_query_lookback_days,
         debug_output_suffix=debug_output_suffix,
         require_area_btool_for_match_ops=require_area_btool_for_match_ops,
+        require_area_btool_for_flow_temp=require_area_btool_for_flow_temp,
+        use_subentity_pm_match=use_subentity_pm_match,
         site=site,
     )
     if result_df is None:
         return ''
     # Return the output path (mirrors the formula in main_cascading_area_priority_final)
     p = _Path(input_csv_path)
+    if str(output_mode).strip().lower() == 'patch':
+        if patch_output_path:
+            return str(_Path(patch_output_path))
+        _batch = query_batch_id if query_batch_id is not None else datetime.now().strftime('%Y%m%d_%H%M%S')
+        return str(p.parent / (p.stem + f'_APC_PATCH_{_batch}' + p.suffix))
     if apc_debug_minimal:
         return str(p.parent / (p.stem + debug_output_suffix + p.suffix))
     return str(p.parent / (p.stem + '_APC' + p.suffix))
@@ -1242,17 +1455,33 @@ if __name__ == "__main__":
                             help='Lookback window (days) used by minimal mode filter')
         parser.add_argument('--query-lookback-days', type=int, default=None, dest='apc_query_lookback_days',
                     help='Optional: limit APC DB query scope to recent source rows by DATA_COLLECTION_TIME')
+        parser.add_argument('--query-key-manifest', default=None, dest='query_key_manifest_path',
+                help='Optional key-manifest CSV path (WAFER_ID and optional WEC_OPERATION) for targeted APC re-query')
+        parser.add_argument('--output-mode', default='full', choices=['full', 'patch'], dest='output_mode',
+                help="Output mode: 'full' (standard) or 'patch' (sidecar rows for later merge)")
+        parser.add_argument('--patch-output-path', default=None, dest='patch_output_path',
+                help='Optional explicit output path for patch mode')
+        parser.add_argument('--query-batch-id', default=None, dest='query_batch_id',
+                help='Optional batch id used in patch output naming and trace columns')
         parser.add_argument('--output-suffix', default='_APC_DEBUG_MINIMAL', dest='debug_output_suffix',
                             help='Output suffix for minimal/debug modes')
+        parser.add_argument('--use-subentity-pm-match', action='store_true',
+                    dest='use_subentity_pm_match',
+                    help='Align APC rows by PM token (source SUBENTITY vs APC SUBENTITY)')
 
         args = parser.parse_args()
 
         result = main_cascading_area_priority_final(
             input_file=args.input_file,
+            query_key_manifest_path=args.query_key_manifest_path,
+            output_mode=args.output_mode,
+            patch_output_path=args.patch_output_path,
+            query_batch_id=args.query_batch_id,
             apc_debug_minimal=args.apc_debug_minimal,
             debug_days=args.debug_days,
             apc_query_lookback_days=args.apc_query_lookback_days,
             debug_output_suffix=args.debug_output_suffix,
+            use_subentity_pm_match=args.use_subentity_pm_match,
             site=args.site,
         )
         print(f"\nProcessing completed successfully!")
