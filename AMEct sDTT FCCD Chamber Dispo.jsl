@@ -1,14 +1,12 @@
-﻿//!
+//!
 Names Default To Here( 1 );
 
 // ============================================================
 // GLOBAL CONFIGURATION AND PATHS
 // ============================================================
-path_1278_d1v_60day_apc="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_HCCD_D1V_60day_APC.csv";
-path_1278_d1v_apc="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_HCCD_D1V_APC.csv";
-path_1278_f32_60day_apc="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_HCCD_F32_60day_APC.csv";
-path_1278_f32_apc="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_HCCD_F32_APC.csv";
-path_1280="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1280sDTT_HCCD_D1V.csv";
+path_1278_d1v="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_FCCD_D1V.csv";
+path_1278_f32="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_FCCD_F32.csv";
+path_1280="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1280sDTT_FCCD_D1V.csv";
 copy_pic_debug = 1;
 copy_button_list_mean_runtime = .;
 copy_layer_boxes_mean_runtime = Associative Array();
@@ -475,7 +473,7 @@ Format_Trend_Charts = Function({trend_chart_object, type, config},
             If(type!="APC",
                 trend_stat_suffix = Substitute( Substitute( Substitute( y_col_display, "ALLSTATS ", "" ), "STATISTICS ", "" ), " VALUE", "" );
                 _trend_tn = Try( config["layer_to_testname"][Uppercase( layer_value )], "" );
-                new_title = Try( config["tech_node_str"], "1278" ) || " " || Try( config["site_str"], "D1V" ) || " HCCD NEST " || layer_value || If( _trend_tn != "", " " || _trend_tn, "" ) || " " || trend_stat_suffix;
+                new_title = Try( config["tech_node_str"], "1278" ) || " " || Try( config["site_str"], "D1V" ) || " FCCD NEST " || layer_value || If( _trend_tn != "", " " || _trend_tn, "" ) || " " || trend_stat_suffix;
 
                 If(type=="MEAN" & no_limits != 1,
                     rpt[AxisBox(1)] << Add Ref Line( recent_limits_mdttucl[layer_value], "Solid", UCL_COLOR, ucl_label);
@@ -652,7 +650,7 @@ Format_Variability_Charts = Function({var_chart_object, stat, type, xcol, config
         Filter Each({seg},(mySegs), (seg<< class name)=="BoxPlotSeg") << Set Line Color("Black");
         If(type=="DTT",	
             If(stat=="MEAN",				
-                rpt << Set Title( tech_node_str || " " || site_str || " HCCD NEST " || wec_layer );
+                rpt << Set Title( tech_node_str || " " || site_str || " FCCD NEST " || wec_layer );
                 If( no_limits != 1,
                     rpt[AxisBox(1)] << Add Ref Line( recent_limits_mdttucl[wec_layer], "Solid", UCL_COLOR, ucl_label);
                     rpt[AxisBox(1)] << Add Ref Line( recent_limits_mdttcl[wec_layer], "Solid", CL_COLOR, cl_label);
@@ -662,7 +660,7 @@ Format_Variability_Charts = Function({var_chart_object, stat, type, xcol, config
             ); 
                 
             If(stat=="SIGMA",
-                rpt << Set Title( tech_node_str || " " || site_str || " HCCD NEST " || wec_layer );
+                rpt << Set Title( tech_node_str || " " || site_str || " FCCD NEST " || wec_layer );
                 If( no_limits != 1,
                     rpt[AxisBox(1)] << Axis Settings({Min(ymin), Max(ymax), Inc(yinc),Minor Ticks(0)});
                     rpt[AxisBox(1)] << Add Ref Line( recent_limits_sdttucl[wec_layer], "Solid", UCL_COLOR, ucl_label);
@@ -687,8 +685,8 @@ Format_Variability_Charts = Function({var_chart_object, stat, type, xcol, config
                 axisbox2_height = If(xcol == 2, chvfl_height * 2, chvfl_height);
             );
             varchart_axisbox = rpt[AxisBox(2)];
-            Try( varchart_axisbox << Set Height( axisbox2_height ) );
-            Try( framebox << Set Height( rowFBheight + 18 - axisbox2_height ) );
+            varchart_axisbox << Set Height(axisbox2_height);
+            framebox << Set Height(rowFBheight +18- axisbox2_height);
 
             If(xcol == 2,
                 // Single chamber - use XPath with the wec_layer value
@@ -740,11 +738,11 @@ Format_Variability_Charts = Function({var_chart_object, stat, type, xcol, config
             
         , //ELSE TYPE == TARGET
             If(stat=="MEAN",
-                rpt << Set Title( tech_node_str || " " || site_str || " HCCD NEST " || wec_layer );
+                rpt << Set Title( tech_node_str || " " || site_str || " FCCD NEST " || wec_layer );
             ); 
                 
             If(type=="SIGMA",
-                rpt << Set Title( tech_node_str || " " || site_str || " HCCD NEST " || wec_layer );
+                rpt << Set Title( tech_node_str || " " || site_str || " FCCD NEST " || wec_layer );
             ); 
             
             varchart_groups=rpt[AxisBox(2)] << Get Max;
@@ -753,8 +751,8 @@ Format_Variability_Charts = Function({var_chart_object, stat, type, xcol, config
             framebox   <<Set Width( varchart_width );
             
             varchart_axisbox=rpt[AxisBox(2)];			
-            Try( varchart_axisbox << Set Height( prod_mop_pilot_height ) );
-            Try( framebox << Set Height( 228 ) );
+            varchart_axisbox <<Set Height( prod_mop_pilot_height );
+            framebox <<Set Height( 228 );
 
             // Add per-layer copy button for TARGET variability charts (e.g., MEAN TARGET fifth column).
             Try(
@@ -795,7 +793,7 @@ Format_Variability_Charts = Function({var_chart_object, stat, type, xcol, config
 // ============================================================
 // MAIN DATA PROCESSING FUNCTION
 // ============================================================
-ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, chamber_list, selected_member, val_include_sigma, val_no_splines, val_dataset, val_site, val_apc_suc_only, val_include_full_history, val_apc_model, dlg_win, val_current_target_only = 0, val_measure = 1, val_include_nonstd = 0, val_include_nonvalid = 0},
+ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, chamber_list, selected_member, val_include_sigma, val_no_splines, val_dataset, val_site, val_apc_suc_only, val_include_full_history, val_apc_model, dlg_win, val_current_target_only = 0, val_measure = 1},
     
     // Derive dataset label for use in titles
     tech_str = If(val_dataset == 1, "1278", "1280");
@@ -807,7 +805,7 @@ ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, cha
 
     // Configuration object
     config = Associative Array();
-    config["window_title"] = dataset_title_str || " HCCD SDTT Report";
+    config["window_title"] = dataset_title_str || " FCCD SDTT Report";
     config["site_str"] = If( val_dataset == 1, If( val_site == 1, "D1V", "F32" ), "D1V" );
     config["tech_node_str"] = If( val_dataset == 1, "1278", "1280" );
     config["varchart_group_width"] = 40;
@@ -846,36 +844,9 @@ ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, cha
     config["dataset_title_str"] = dataset_title_str;
 
     // Select source path.
-    // 1278 prefers APC files but now falls back when 60-day APC files are not present.
-    // 1280 remains fixed.
+    // FCCD has a single file per site — no APC or 60-day variants.
     If( val_dataset == 1,
-        site_60day_apc = If( val_site == 1, path_1278_d1v_60day_apc, path_1278_f32_60day_apc );
-        site_full_apc = If( val_site == 1, path_1278_d1v_apc, path_1278_f32_apc );
-        site_60day_non_apc = If( val_site == 1,
-            "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_HCCD_D1V_60day.csv",
-            "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_HCCD_F32_60day.csv"
-        );
-
-        If( val_include_full_history == 1,
-            path = site_full_apc;
-        ,
-            // Preferred unchecked path is 60-day APC, then full APC, then 60-day non-APC.
-            If( File Exists( site_60day_apc ),
-                path = site_60day_apc;
-            ,
-                If( File Exists( site_full_apc ),
-                    path = site_full_apc;
-                    Debug_Trace( "Fallback: 60day APC missing, using full APC" );
-                ,
-                    If( File Exists( site_60day_non_apc ),
-                        path = site_60day_non_apc;
-                        Debug_Trace( "Fallback: APC sources missing, using 60day non-APC" );
-                    ,
-                        path = site_60day_apc;
-                    );
-                );
-            );
-        );
+        path = If( val_site == 1, path_1278_d1v, path_1278_f32 );
     ,
         path = path_1280;
     );
@@ -934,37 +905,30 @@ ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, cha
         Apply_Target_Regime_Filter( dt );
     );
 
-    // Filter to APC feedback success rows only (APC_FB_SUC == 1)
+    // Filter to APC feedback success rows only (APC_FB_SUC == 1) — guarded for FCCD
     If(val_apc_suc_only == 1,
-        dt << Select Where(:APC_FB_SUC != 1);
-        dt << Delete Rows;
-        dt << Clear Select;
-    );
-
-    // Filter by APC MODEL selection.
-    // 1 = All Models (no filter), 2 = AMECT_ICCR2 only, 3 = MFGAMECT_FLOW_TEMP only.
-    If( val_apc_model == 2,
-        dt << Select Where( :APC_AREA != "AMECT_ICCR2" );
-        dt << Delete Rows;
-        dt << Clear Select;
-    ,
-        If( val_apc_model == 3,
-            dt << Select Where( :APC_AREA != "MFGAMECT_FLOW_TEMP" );
+        Try(
+            dt << Select Where(:APC_FB_SUC != 1);
             dt << Delete Rows;
             dt << Clear Select;
         );
     );
 
-    // ---- Data quality filters ----
-    If( val_include_nonstd != 1,
-        dt << Select Where( :ALLSTATS_STANDARD_FLAG == "N" );
-        dt << Delete Rows;
-        dt << Clear Select;
-    );
-    If( val_include_nonvalid != 1,
-        dt << Select Where( :ALLSTATS_VALID_FLAG == "N" );
-        dt << Delete Rows;
-        dt << Clear Select;
+    // Filter by APC MODEL selection — guarded for FCCD
+    If( val_apc_model == 2,
+        Try(
+            dt << Select Where( :APC_AREA != "AMECT_ICCR2" );
+            dt << Delete Rows;
+            dt << Clear Select;
+        );
+    ,
+        If( val_apc_model == 3,
+            Try(
+                dt << Select Where( :APC_AREA != "MFGAMECT_FLOW_TEMP" );
+                dt << Delete Rows;
+                dt << Clear Select;
+            );
+        );
     );
 
     // Shared x-axis window for all time-trend charts (MEAN/APC/SIGMA).
@@ -979,7 +943,8 @@ ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, cha
     Debug_Trace( "Shared time axis min=" || Char( time_axis_min ) || " max=" || Char( time_axis_max ) );
 
     // chamber_list is already set from dialog selection above
-    dt << New Column( "CHAMBER",Character,Set Each Value(If(Contains( chamber_list, :SUBENTITY ),:SUBENTITY,"FLEET")));
+    // FCCD uses AME_ETCH column instead of SUBENTITY to identify the etch chamber
+    dt << New Column( "CHAMBER",Character,Set Each Value(If(Contains( chamber_list, :AME_ETCH ),:AME_ETCH,"FLEET")));
 
     // Color or mark by column
     dt << Color or Mark by Column(:CHAMBER,Color Theme( "JMP Vibrant"(1) ),Marker Theme( "Solid" ),Continuous Scale( 0 ));
@@ -1134,17 +1099,6 @@ ProcessSDTTData = Function({val_cb_close_reports_and_windows, val_data_type, cha
                     If(val_show_splines == 1, trend_dtt_mean << Fit Spline(0.1, Standardized, {Report( 0 ), Line Width( 0.1)}));
                     Format_Trend_Charts(trend_dtt_mean,mean,config);, 
 
-                    If(val_dataset == 1,
-                        fg_trend_btool= dt << FitGroup(
-                            trend_btool=Bivariate(Y( Column( ycol1)),X( Column ( xcol ) ),By( Column ( bycol1 )),
-                                GroupBy( Column( legendcol1) ),
-                            ),
-                            SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( apc||" B_TOOL BY "||bycol1 ), Close ( 0 ) })),
-                        );
-                        If(val_show_splines == 1, trend_btool << Fit Spline(0.1, Standardized, {Report( 0 ), Line Width( 0.1)}));
-                        Format_Trend_Charts(trend_btool,apc,config)
-                    );,
-
                     fg_var_dtt_mean= dt << FitGroup(
                         var_dtt_mean = dt << Variability Chart(
                             Y( Column( ycol0) ),X( Column ( vcol1 )),
@@ -1288,8 +1242,6 @@ Run_Generate_Report = Function( {},
     val_no_splines = cb_no_splines << Get;
     val_apc_suc_only = cb_apc_suc_only << Get;
     val_current_target_only = cb_current_target_only << Get;
-    val_include_nonstd   = cb_include_nonstd   << Get;
-    val_include_nonvalid = cb_include_nonvalid << Get;
     val_apc_model = rbApcModel << Get;
     val_measure = rbMeasure << Get;
     val_dataset_choice = rbDataset << Get;
@@ -1360,7 +1312,7 @@ Run_Generate_Report = Function( {},
 
     // Call the data processing function
     Try(
-        ProcessSDTTData(val_cb_close_reports_and_windows, val_data_type, chamber_list, selected_member, val_include_sigma, val_no_splines, val_dataset, val_site, val_apc_suc_only, val_include_full_history, val_apc_model, dialog_window, val_current_target_only, val_measure, val_include_nonstd, val_include_nonvalid);
+        ProcessSDTTData(val_cb_close_reports_and_windows, val_data_type, chamber_list, selected_member, val_include_sigma, val_no_splines, val_dataset, val_site, val_apc_suc_only, val_include_full_history, val_apc_model, dialog_window, val_current_target_only, val_measure);
         Debug_Trace( "Run_Generate_Report click success" );
     ,
         Debug_Trace( "Run_Generate_Report click failure" );
@@ -1369,7 +1321,7 @@ Run_Generate_Report = Function( {},
     );
 );
 
-dialog_window = New Window( "SDTT Report Options", 
+dialog_window = New Window( "FCCD SDTT Report Options", 
     V List Box(
         H List Box(
             V List Box(
@@ -1442,12 +1394,6 @@ dialog_window = New Window( "SDTT Report Options",
                                 cb_no_splines = Check Box( "No Splines" ),
                                 cb_apc_suc_only = Check Box( "APC_FB_SUC=1" ),
                                 cb_current_target_only = Check Box( "Current Target Only" ),
-                            ),
-                        ),
-                        Panel Box("DATA QUALITY",
-                            V List Box(
-                                cb_include_nonstd   = Check Box( "Include Non-Standard" ),
-                                cb_include_nonvalid = Check Box( "Include Non-Valid" ),
                             ),
                         ),
                         Panel Box("APC MODEL",

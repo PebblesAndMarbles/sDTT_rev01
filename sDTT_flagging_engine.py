@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 INPUT_CSV = (
     r"\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson"
-    r"\sDTT\sDTT_rev01\integrated_output\1278sDTT_HCCD_D1V_APC.csv"
+    r"\sDTT\sDTT_rev01\integrated_output\1278sDTT_HCCD_D1V_60day_APC.csv"
 )
 
 # APC_B_TOOL step / persistence detection
@@ -27,7 +27,7 @@ TARGET_CHANGE_THRESHOLD_NM = 0.1   # minimum |delta| in ALLSTATS_MEAN_TARGET_VAL
 # Centering flag thresholds
 CI_CONFIDENCE    = 0.95
 FLAGS_PER_LAYER  = 5   # top-N flags kept per (FLAG_TYPE, WEC_LAYER); ranked PRIO 1-FLAGS_PER_LAYER
-MIN_FLAG_N       = 5   # minimum wafers in assessment window to produce a flag
+MIN_FLAG_N       = 3   # minimum wafers in assessment window to produce a flag
 
 # Outlier suppression
 MAD_MULTIPLIER = 3.0   # |value − median| > MAD_MULTIPLIER × MAD → treated as outlier
@@ -37,6 +37,65 @@ CONFOUND_DOMINANCE_THRESHOLD = 0.80   # single SUBENTITY must account for > this
 
 # Product flag gate — set False after sDTT_product_flagging_engine.py is validated
 PRODUCT_FLAGS_ENABLED = True
+
+
+def detect_current_target_regimes(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Mirror the product engine's current-target definition.
+
+    Per (PROD_MOP_PILOT, WEC_LAYER), the current regime is the trailing run of
+    the most recently observed ALLSTATS_MEAN_TARGET_VALUE. Rows outside that
+    trailing run are marked False in TARGET_REGIME_LATEST.
+    """
+    df = df.sort_values(
+        ['PROD_MOP_PILOT', 'WEC_LAYER', 'DATA_COLLECTION_TIME']
+    ).copy()
+
+    regime_latest      = np.zeros(len(df), dtype=bool)
+    target_change_date = pd.array([pd.NaT] * len(df), dtype='datetime64[ns]')
+    n_pre_change       = np.zeros(len(df), dtype=int)
+
+    idx_position = {label: pos for pos, label in enumerate(df.index)}
+
+    for (_pilot, _layer), grp in df.groupby(
+        ['PROD_MOP_PILOT', 'WEC_LAYER'], sort=False
+    ):
+        tgt       = grp['ALLSTATS_MEAN_TARGET_VALUE'].to_numpy()
+        times     = grp['DATA_COLLECTION_TIME'].to_numpy()
+        positions = [idx_position[label] for label in grp.index]
+
+        if len(tgt) == 0:
+            continue
+
+        last_val = tgt[-1]
+
+        if np.isnan(last_val):
+            for pos in positions:
+                regime_latest[pos] = True
+            continue
+
+        regime_start_iloc = len(tgt) - 1
+        while (
+            regime_start_iloc > 0
+            and not np.isnan(tgt[regime_start_iloc - 1])
+            and tgt[regime_start_iloc - 1] == last_val
+        ):
+            regime_start_iloc -= 1
+
+        for i, pos in enumerate(positions):
+            if i >= regime_start_iloc:
+                regime_latest[pos] = True
+
+        if regime_start_iloc > 0:
+            change_ts = pd.Timestamp(times[regime_start_iloc])
+            for pos in positions:
+                target_change_date[pos] = change_ts
+                n_pre_change[pos]       = regime_start_iloc
+
+    df['TARGET_REGIME_LATEST'] = regime_latest
+    df['TARGET_CHANGE_DATE']   = pd.array(target_change_date, dtype='datetime64[ns]')
+    df['N_PRE_CHANGE']         = n_pre_change
+    return df
 
 # ── Output column order ────────────────────────────────────────────────────────
 
@@ -531,6 +590,10 @@ def run_flagging_engine(input_csv_path: str = None) -> pd.DataFrame:
     """
     start_time  = datetime.now()
     input_path  = Path(input_csv_path or INPUT_CSV)
+    if not input_path.name.endswith('_60day_APC.csv'):
+        raise ValueError(
+            f"sDTT flagging engine is restricted to 60-day APC inputs; got {input_path.name}"
+        )
     date_str    = datetime.now().strftime('%Y%m%d')
     output_path = input_path.parent / f"sDTT_flags_HCCD_D1V_{date_str}.csv"
 
@@ -548,6 +611,8 @@ def run_flagging_engine(input_csv_path: str = None) -> pd.DataFrame:
     df['DATA_COLLECTION_TIME']     = pd.to_datetime(
         df['DATA_COLLECTION_TIME'], format='mixed', dayfirst=False, errors='coerce'
     )
+    if 'APC_AREA' not in df.columns:
+        df['APC_AREA'] = ''
     df['APC_B_TOOL']               = pd.to_numeric(df['APC_B_TOOL'], errors='coerce')
     df['STATISTICS_MEAN_DTT_VALUE'] = pd.to_numeric(df['STATISTICS_MEAN_DTT_VALUE'], errors='coerce')
     df['ALLSTATS_MEAN_DTT_VALUE']   = pd.to_numeric(df['ALLSTATS_MEAN_DTT_VALUE'], errors='coerce')
@@ -566,6 +631,40 @@ def run_flagging_engine(input_csv_path: str = None) -> pd.DataFrame:
         )
     else:
         logger.warning("  ALLSTATS_DYNWAFER column not found — DYNWAFER_001 filter skipped")
+
+    # Scope down to the resurrected APC area and feedback-success rows only.
+    n_before = len(df)
+    if 'APC_AREA' in df.columns:
+        df = df[df['APC_AREA'].eq('MFGAMECT_FLOW_TEMP')].reset_index(drop=True)
+        logger.info(
+            f"  {n_before - len(df):,} rows dropped (APC_AREA != MFGAMECT_FLOW_TEMP); "
+            f"{len(df):,} remain"
+        )
+    else:
+        logger.warning("  APC_AREA column not found — APC area filter skipped")
+
+    n_before = len(df)
+    if 'APC_FB_SUC' in df.columns:
+        df = df[df['APC_FB_SUC'].eq(1)].reset_index(drop=True)
+        logger.info(
+            f"  {n_before - len(df):,} rows dropped (APC_FB_SUC != 1); "
+            f"{len(df):,} remain"
+        )
+    else:
+        logger.warning("  APC_FB_SUC column not found — APC success filter skipped")
+
+    n_before = len(df)
+    if 'WEC_RECIPE' in df.columns:
+        gabon_mask = df['WEC_RECIPE'].astype(str).str.contains('GABON', case=False, na=False)
+        m05_mask = df['WEC_LAYER'].astype(str).str.endswith('_M05') if 'WEC_LAYER' in df.columns else False
+        # Keep GABON rows for M05 only; remove GABON for all other layers.
+        df = df[~gabon_mask | m05_mask].reset_index(drop=True)
+        logger.info(
+            f"  {n_before - len(df):,} rows dropped (WEC_RECIPE contains GABON except M05); "
+            f"{len(df):,} remain"
+        )
+    else:
+        logger.warning("  WEC_RECIPE column not found — GABON filter skipped")
 
     # Row-level BSL classification based on APC_PRODGROUP at time of measurement
     df['IS_BSL'] = df['APC_PRODGROUP'].astype(str).str.startswith('BSL')
@@ -589,6 +688,21 @@ def run_flagging_engine(input_csv_path: str = None) -> pd.DataFrame:
     if len(df) < n_before:
         logger.info(f"  {n_before - len(df):,} additional rows dropped (null SUBENTITY or PROD_MOP_PILOT)")
 
+    # Align the chamber engine with the product engine's current-target regime logic.
+    logger.info("Phase 2 — Detecting current target regimes (trailing run of latest target value)...")
+    df = detect_current_target_regimes(df)
+    n_latest = int(df['TARGET_REGIME_LATEST'].sum())
+    n_changed = int((df['TARGET_REGIME_LATEST'] & df['TARGET_CHANGE_DATE'].notna()).sum())
+    logger.info(
+        f"  {n_latest:,} rows in current target regime; {n_changed:,} have a prior target-change on record"
+    )
+
+    n_before = len(df)
+    df = df[df['TARGET_REGIME_LATEST']].reset_index(drop=True)
+    logger.info(
+        f"  {n_before - len(df):,} rows dropped (not in current target regime); {len(df):,} remain"
+    )
+
     logger.info(
         f"  BSL rows: {df['IS_BSL'].sum():,} | NPI rows: {(~df['IS_BSL']).sum():,}"
     )
@@ -598,14 +712,7 @@ def run_flagging_engine(input_csv_path: str = None) -> pd.DataFrame:
 
     # ── Phase 2: Product target regime detection ──────────────────────────────
     if PRODUCT_FLAGS_ENABLED:
-        logger.info("Phase 2 — Detecting product target change regimes...")
-        df = detect_target_regimes(df)
-        n_latest  = int(df['TARGET_REGIME_LATEST'].sum())
-        n_changed = int((df['TARGET_REGIME_LATEST'] & df['TARGET_CHANGE_DATE'].notna()).sum())
-        logger.info(
-            f"  {n_latest:,} rows in latest target regime; "
-            f"{n_changed:,} have a prior target-change event on record"
-        )
+        logger.info("Phase 2 — Product target logic already applied via current-target filter")
     else:
         logger.info("Phase 2 — Skipped (PRODUCT_FLAGS_ENABLED = False)")
 

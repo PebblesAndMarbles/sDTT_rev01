@@ -6,7 +6,7 @@ Names Default To Here( 1 );
 // ============================================================
 dataset_str = "1280 KARC FCCD D1V";
 tech_str    = "1280";
-path_karc_fccd_d1v = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\adaptations\1280KARC\integrated_output\1280sDTT_KARC_FCCD_D1V_Ed.csv";
+path_karc_fccd_d1v = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\adaptations\1280KARC\integrated_output\1280sDTT_KARC_FCCD_D1V.csv";
 allowed_structures = {"NESTVIA_PR", "NESTVIA_HM", "TRENCH", "ETE"};
 
 rowFBheight = 355;
@@ -409,7 +409,55 @@ Align_Copy_Outline_Heights = Function( {stat_label, trend_obj, panel_key = "MEAN
     );
 );
 
-Append_Copy_Button = Function( {config, layer_name, button_label, copy_target, panel_key = "MEAN"},
+Resolve_Copy_Target = Function( {rpt},
+    copy_target = .;
+    Try( copy_target = rpt[OutlineBox(1)] );
+    If( !Is Scriptable( copy_target ), Try( copy_target = rpt[OutlineBox(2)] ) );
+    If( !Is Scriptable( copy_target ), Try( copy_target = rpt[ListBox(2)] ) );
+    If( !Is Scriptable( copy_target ), Try( copy_target = rpt[FrameBox(1)] ) );
+    copy_target;
+);
+
+Resolve_Live_Report_From_Platform = Function( {platform_obj, layer_key = ""},
+    live_rpt = .;
+    If( !Can_Get_Report( platform_obj ),
+        Return( live_rpt );
+    );
+
+    rpt_obj = .;
+    Try( rpt_obj = platform_obj << Report );
+    rpt_list = As_Report_List( rpt_obj );
+    target_layer = Format_Struct_Label( Extract_Layer_Value( layer_key ) );
+    If( target_layer != "",
+        For( i = 1, i <= N Items( rpt_list ), i++,
+            candidate = rpt_list[i];
+            candidate_title = "";
+            Try( candidate_title = candidate << Get Title );
+            If( Format_Struct_Label( Extract_Layer_Value( candidate_title ) ) == target_layer,
+                live_rpt = candidate;
+                Break();
+            );
+        );
+    );
+    // Pass 2: title contains target layer (handles renamed/formatted titles)
+    If( !Is Scriptable( live_rpt ) & target_layer != "",
+        For( i = 1, i <= N Items( rpt_list ), i++,
+            candidate = rpt_list[i];
+            candidate_title = "";
+            Try( candidate_title = Uppercase( Char( candidate << Get Title ) ) );
+            If( Contains( candidate_title, Uppercase( target_layer ) ) > 0,
+                live_rpt = candidate;
+                Break();
+            );
+        );
+    );
+    If( !Is Scriptable( live_rpt ) & N Items( rpt_list ) > 0,
+        live_rpt = rpt_list[1];
+    );
+    live_rpt;
+);
+
+Append_Copy_Button = Function( {config, layer_name, button_label, source_platform, source_rpt, panel_key = "MEAN"},
     use_sigma_panel = Uppercase( Char( panel_key ) ) == "SIGMA";
 
     If( use_sigma_panel,
@@ -488,8 +536,21 @@ Append_Copy_Button = Function( {config, layer_name, button_label, copy_target, p
         Eval Expr(
             Expr( layer_button_box ) << Append(
                 Button Box( Expr( button_label ),
-                    Try(
-                        Expr( copy_target ) << Copy Picture;
+                    source_rpt_live = .;
+                    live_rpt = .;
+                    click_target = .;
+                    Try( source_rpt_live = Expr( source_rpt ) );
+                    If( Is Scriptable( source_rpt_live ),
+                        Try( click_target = Resolve_Copy_Target( source_rpt_live ) );
+                    );
+                    If( !Is Scriptable( click_target ),
+                        Try( live_rpt = Resolve_Live_Report_From_Platform( Expr( source_platform ), Expr( layer_key ) ) );
+                        If( Is Scriptable( live_rpt ),
+                            Try( click_target = Resolve_Copy_Target( live_rpt ) );
+                        );
+                    );
+                    If( Is Scriptable( click_target ),
+                        Try( click_target << Copy Picture );
                     );
                 )
             )
@@ -573,6 +634,27 @@ Format_Trend_Charts = Function( {trend_chart_object, type, config},
         Treports = {Treports_raw};
     );
     j = 0;
+    // Lazy-build layer → TEST_NAME map (shared via config; pre-built here so Trend titles resolve before Variability Charts run)
+    If( !Is Associative Array( Try( config["layer_to_testname"], . ) ),
+        _lttn = Associative Array();
+        _bycol = Try( config["bycol1"], "" );
+        _dt_ref = Try( config["dt"], Current Data Table() );
+        If( Is Scriptable( _dt_ref ) & _bycol != "",
+            Try(
+                _lk_col = Column( _dt_ref, _bycol );
+                _tn_col = Column( _dt_ref, "TEST_NAME" );
+                _nr = N Rows( _dt_ref );
+                For( _i = 1, _i <= _nr, _i++,
+                    _lk = Uppercase( Trim( Char( _lk_col[_i] ) ) );
+                    _tn = Trim( Char( _tn_col[_i] ) );
+                    If( _lk != "" & _tn != "",
+                        _lttn[_lk] = _tn;
+                    );
+                );
+            );
+        );
+        config["layer_to_testname"] = _lttn;
+    );
 
     If( type == "ALL",
         rpt = Treports_raw;
@@ -621,7 +703,9 @@ Format_Trend_Charts = Function( {trend_chart_object, type, config},
             struct_label  = Format_Struct_Label( layer_value );
             y_col_display = Substitute( y_col_name, "_", " " );
 
-            new_title = y_col_display || " " || dataset_title_compact || " " || struct_label;
+            trend_stat_suffix = Substitute( Substitute( Substitute( y_col_display, "ALLSTATS ", "" ), "STATISTICS ", "" ), " VALUE", "" );
+            _trend_tn = Try( config["layer_to_testname"][Uppercase( struct_label )], "" );
+            new_title = Try( config["tech_node_str"], "1280" ) || " " || Try( config["site_str"], "D1V" ) || " FCCD " || struct_label || If( _trend_tn != "", " " || _trend_tn, "" ) || " " || trend_stat_suffix;
 
             If( type == "MEAN",
                 mean_ucl = Lookup_Limit_Value( structure_limits_mean_ucl, layer_value );
@@ -678,7 +762,7 @@ Format_Trend_Charts = Function( {trend_chart_object, type, config},
 
             panel_key = "MEAN";
             If( type == "SIGMA", panel_key = "SIGMA" );
-            Append_Copy_Button( config, struct_label, "Trend", rpt, panel_key );
+            Append_Copy_Button( config, struct_label, "Trend", trend_chart_object, rpt, panel_key );
 
             If( val_show_splines == 1, rpt[BorderBox( 3 )] << Visibility( "Collapse" ) );
             rpt[FrameBox( 1 )] << Set Height( rowFBheight );
@@ -736,6 +820,34 @@ Format_Variability_Charts = Function( {var_chart_object, stat, config, vcol},
         dataset_title_str = tech_str;
     );
     dataset_title_compact = Substitute( dataset_title_str, " D1V", "" );
+    // Unified panel title components
+    site_str = Try( config["site_str"], "D1V" );
+    tech_node_str = Try( config["tech_node_str"], "1280" );
+    ycol_current = If( stat == "MEAN", config["ycol0"], config["ycol2"] );
+    ob3_label = Substitute( Substitute( Substitute( ycol_current, "ALLSTATS_", "" ), "STATISTICS_", "" ), "_VALUE", "" );
+    ob3_label = Substitute( ob3_label, "_", " " );
+    ob3_label = ob3_label || " BY " || Substitute( vcol, "_", " " );
+    // Lazy-build layer → TEST_NAME display map for OB2 (built once per Format_Variability_Charts call)
+    If( !Is Associative Array( Try( config["layer_to_testname"], . ) ),
+        _lttn = Associative Array();
+        _bycol = Try( config["bycol1"], "" );
+        _dt_ref = Try( config["dt"], Current Data Table() );
+        If( Is Scriptable( _dt_ref ) & _bycol != "",
+            Try(
+                _lk_col = Column( _dt_ref, _bycol );
+                _tn_col = Column( _dt_ref, "TEST_NAME" );
+                _nr = N Rows( _dt_ref );
+                For( _i = 1, _i <= _nr, _i++,
+                    _lk = Uppercase( Trim( Char( _lk_col[_i] ) ) );
+                    _tn = Trim( Char( _tn_col[_i] ) );
+                    If( _lk != "" & _tn != "",
+                        _lttn[_lk] = _tn;
+                    );
+                );
+            );
+        );
+        config["layer_to_testname"] = _lttn;
+    );
 
     Vreports_raw = var_chart_object << Report;
     If( Type( Vreports_raw ) == "List",
@@ -754,7 +866,8 @@ Format_Variability_Charts = Function( {var_chart_object, stat, config, vcol},
 
         // Match chamber script behavior: rename analysis/layer outline boxes
         // and remove redundant autogenerated text labels.
-        rpt[1][OutlineBox( 1 )] << Set Title( "ANALYSIS" );
+        ob2_display = Try( config["layer_to_testname"][Uppercase( struct_label )], struct_label );
+        rpt[1][OutlineBox( 1 )] << Set Title( ob2_display );
 
         axisbox = rpt[axis box( 1 )]; axisbox << Show Major Grid( 1 ); axisbox << Show Minor Grid( 1 );
         axisbox = rpt[axis box( 2 )]; axisbox << Show Major Grid( 1 ); axisbox << Show Minor Grid( 1 );
@@ -798,16 +911,16 @@ Format_Variability_Charts = Function( {var_chart_object, stat, config, vcol},
         );
 
         // Move the detailed/dynamic title to the per-layer outline title.
-        // Keep the top-level title generic as requested.
-        rpt << Set Title( "VARIABILITY CHART" );
+        // Include layer key in top-level title for panel resolution during click-time copy fallback.
+        rpt << Set Title( tech_node_str || " " || site_str || " FCCD " || struct_label );
         If( detail_title == "",
             detail_title = "DTT BY " || vcol;
         );
-        rpt[1][OutlineBox( 2 )] << Set Title( detail_title || "  -  " || struct_label );
+        rpt[1][OutlineBox( 2 )] << Set Title( ob3_label );
 
         panel_key = "MEAN";
         If( stat == "SIGMA", panel_key = "SIGMA" );
-        Append_Copy_Button( config, struct_label, "Var", rpt, panel_key );
+        Append_Copy_Button( config, struct_label, "Var", var_chart_object, ., panel_key );
 
         varchart_groups = rpt[AxisBox( 2 )] << Get Max;
         varchart_width  = varchart_groups * varchart_group_width * 0.6;
@@ -910,6 +1023,8 @@ ProcessFLEETData = Function(
     config["tech_str"] = tech_str;
     dataset_title_str = dataset_str;
     config["dataset_title_str"] = dataset_title_str;
+    config["site_str"] = "D1V";
+    config["tech_node_str"] = "1280";
 
     source_paths = {path_karc_fccd_d1v};
 
@@ -925,6 +1040,7 @@ ProcessFLEETData = Function(
 
     dt = Open( path );
     dt = Current Data Table();
+    config["dt"] = dt;
 
     // ---- PRODUCT_NAME and SITE_PRODUCT_NAME columns ----
     dt << New Column( "PRODUCT_NAME", Character );

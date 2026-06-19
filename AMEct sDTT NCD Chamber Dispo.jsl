@@ -1,0 +1,1991 @@
+﻿//!
+Names Default To Here( 1 );
+
+// ============================================================
+// GLOBAL CONFIGURATION AND PATHS
+// ============================================================
+path_ncd="\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\sDTT\sDTT_rev01\integrated_output\1278sDTT_NCD_MT6_D1V.csv";
+copy_pic_debug = 1;
+copy_button_list_mean_runtime = .;
+copy_layer_boxes_mean_runtime = Associative Array();
+copy_layer_label_boxes_mean_runtime = Associative Array();
+copy_layer_spacers_mean_runtime = Associative Array();
+copy_button_list_sigma_runtime = .;
+copy_layer_boxes_sigma_runtime = Associative Array();
+copy_layer_label_boxes_sigma_runtime = Associative Array();
+copy_layer_spacers_sigma_runtime = Associative Array();
+copy_layer_extra_padding = 346;
+copy_outline_inner_pad_mean = 18;
+copy_outline_inner_pad_sigma = 22;
+copy_mean_panel_height_adjust = 46;
+var_frame_height_boost = 75;
+
+
+				                rowFBheight=370;
+				                chvfl_height=80;
+				                prod_mop_pilot_height=160;
+
+// Chamber lists keyed by team member (name, chamber_list)
+chamber_data = {
+    {"Trey",    {"AME409_PM1","AME409_PM2","AME409_PM3","AME409_PM4","AME409_PM5","AME409_PM6","AME421_PM3","AME421_PM4"}},
+    {"Kayden",  {"AME403_PM1","AME403_PM2","AME403_PM3","AME403_PM4","AME403_PM5","AME403_PM6","AME421_PM1","AME421_PM2"}},
+    {"Chang",   {"AME401_PM1","AME401_PM2","AME401_PM3","AME401_PM4","AME401_PM5","AME401_PM6","AME423_PM1","AME423_PM2"}},
+    {"Adi",     {"AME403_PM1","AME403_PM2","AME403_PM3","AME403_PM4","AME403_PM5","AME403_PM6","AME421_PM5","AME421_PM6"}},
+    {"Travis",  {"AME423_PM5","AME423_PM6"}},
+    {"Tyler",   {"AME411_PM1","AME411_PM2","AME411_PM3","AME411_PM4","AME411_PM5","AME411_PM6"}},
+    {"Mathius", {"AME417_PM1","AME417_PM2","AME417_PM3","AME417_PM4","AME417_PM5","AME417_PM6","AME423_PM3","AME423_PM4"}},
+    {"Sashank", {"AME419_PM1","AME419_PM2","AME419_PM3","AME419_PM4","AME419_PM5","AME419_PM6"}},
+    {"William", {"AME425_PM1","AME425_PM2","AME425_PM3","AME425_PM4","AME425_PM5","AME425_PM6"}},
+    {"Minog",   {"AME427_PM1","AME427_PM2","AME427_PM3","AME427_PM4","AME427_PM5","AME427_PM6"}}
+};
+
+Build_Subentity_Fleet_List = Function( {},
+    raw_list = {};
+    For( owner_i = 1, owner_i <= N Items( chamber_data ), owner_i++,
+        owner_chambers = chamber_data[owner_i][2];
+        For( chamber_i = 1, chamber_i <= N Items( owner_chambers ), chamber_i++,
+            Insert Into( raw_list, Char( owner_chambers[chamber_i] ) );
+        );
+    );
+    out_list = Associative Array( raw_list ) << Get Keys;
+    Sort List( out_list );
+);
+
+Filter_Subentity_Fleet_List = Function( {fleet_list, raw_filter},
+    needle = Uppercase( Trim( Char( raw_filter ) ) );
+    If( needle == "",
+        Return( fleet_list );
+    );
+
+    filtered = {};
+    For( i = 1, i <= N Items( fleet_list ), i++,
+        item = Char( fleet_list[i] );
+        If( Contains( Uppercase( item ), needle ),
+            Insert Into( filtered, item );
+        );
+    );
+    filtered;
+);
+
+Normalize_Subentity_Selection = Function( {raw_selection, visible_items},
+    out = {};
+
+    If( Is List( raw_selection ),
+        For( i = 1, i <= N Items( raw_selection ), i++,
+            item = Char( raw_selection[i] );
+            If( Contains( visible_items, item ),
+                Insert Into( out, item );
+            );
+        );
+    ,
+        If( Type( raw_selection ) == "Matrix",
+            n_sel = N Row( raw_selection );
+            For( i = 1, i <= n_sel, i++,
+                idx = Num( raw_selection[i] );
+                If( 1 <= idx <= N Items( visible_items ),
+                    Insert Into( out, Char( visible_items[idx] ) );
+                );
+            );
+        ,
+            If( Type( raw_selection ) == "String" & raw_selection != "",
+                Insert Into( out, raw_selection );
+            );
+        );
+    );
+
+    If( N Items( out ) > 0,
+        out = Associative Array( out ) << Get Keys;
+        Sort List( out );
+    );
+    out;
+);
+
+Normalize_Report_List = Function( {report_obj},
+    If( Is List( report_obj ),
+        Return( report_obj );
+    );
+    {report_obj};
+);
+
+Normalize_Layer_Key = Function( {raw_layer},
+    Uppercase( Trim( Char( raw_layer ) ) );
+);
+
+Can_Get_Report = Function( {obj},
+    _ok = 0;
+    Try(
+        _tmp = obj << Report;
+        _ok = 1;
+    ,
+        _ok = 0;
+    );
+    _ok;
+);
+
+Get_Report_Height = Function( {rpt},
+    _h = .;
+    Try(
+        _sz = rpt << Get Size;
+        If( Is List( _sz ) & N Items( _sz ) >= 2 & _sz[2] > 0,
+            _h = _sz[2];
+        );
+    );
+    If( Is Missing( _h ) | _h <= 0,
+        Try( _h = rpt << Get Height );
+    );
+    If( Is Missing( _h ) | _h <= 0,
+        Try(
+            _sz = rpt[FrameBox( 1 )] << Get Size;
+            If( Is List( _sz ) & N Items( _sz ) >= 2,
+                _h = _sz[2];
+            );
+        );
+    );
+    _h;
+);
+
+Layer_Key_From_Title = Function( {title_text, fallback_key},
+    _layer = "";
+    Try( _layer = Word( -1, Char( title_text ), "=" ) );
+    If( Is Missing( _layer ) | _layer == "" | _layer == Char( title_text ),
+        _layer = fallback_key;
+    );
+    Normalize_Layer_Key( _layer );
+);
+
+Extract_Layer_Key_From_Report = Function( {rpt, fallback_key = ""},
+    _layer_key = "";
+    _title = "";
+    Try( _title = rpt << Get Title );
+    _layer_key = Layer_Key_From_Title( _title, "" );
+
+    If( _layer_key == "",
+        _obox_title = "";
+        Try( _obox_title = rpt[OutlineBox(2)] << Get Title );
+        If( !Is Missing( _obox_title ) & Char( _obox_title ) != "",
+            _layer_key = Normalize_Layer_Key( _obox_title );
+        );
+    );
+
+    If( _layer_key == "",
+        _layer_key = Normalize_Layer_Key( fallback_key );
+    );
+    _layer_key;
+);
+
+Hide_Spline_Control_Box = Function( {rpt, layer_key = ""},
+    _hid = 0;
+    // HCCD-safe collapse paths: hide spline controls without touching chart containers.
+    Try( rpt[BorderBox(3)] << Visibility( "Collapse" ); _hid = 1; );
+    Try( rpt[OutlineBox( "Spline Fit" )] << Visibility( "Collapse" ); _hid = 1; );
+    Try( rpt[OutlineBox( "Smoother Fit" )] << Visibility( "Collapse" ); _hid = 1; );
+    Try( rpt[OutlineBox( "Smoother" )] << Visibility( "Collapse" ); _hid = 1; );
+    Try( rpt[OutlineBox( "Spline" )] << Visibility( "Collapse" ); _hid = 1; );
+    // Fallback: collapse any control outline whose title mentions spline/smoother.
+    Try(
+        _ctrl_boxes = rpt << XPath( "//OutlineBox" );
+        For( _ci = 1, _ci <= N Items( _ctrl_boxes ), _ci++,
+            _ct = "";
+            Try( _ct = Uppercase( Char( _ctrl_boxes[_ci] << Get Title ) ) );
+            If( Contains( _ct, "SPLINE" ) | Contains( _ct, "SMOOTHER" ),
+                Try( _ctrl_boxes[_ci] << Visibility( "Collapse" ); _hid = 1; );
+            );
+        );
+    );
+    Debug_Trace( "trend panel: spline control collapse attempted layer=" || Char( layer_key ) || " hid=" || Char( _hid ) );
+);
+
+Resolve_Copy_Target = Function( {rpt, context_label = "", layer_key = ""},
+    copy_target = .;
+    copy_target_source = "none";
+    If( !Is Scriptable( copy_target ),
+        Try(
+            copy_target = rpt[OutlineBox(1)];
+            copy_target_source = "OutlineBox(1)";
+        );
+    );
+    If( !Is Scriptable( copy_target ),
+        Try(
+            copy_target = rpt[OutlineBox(2)];
+            copy_target_source = "OutlineBox(2)";
+        );
+    );
+    If( !Is Scriptable( copy_target ),
+        Try(
+            copy_target = rpt[ListBox(2)];
+            copy_target_source = "ListBox(2)";
+        );
+    );
+    If( !Is Scriptable( copy_target ),
+        Try(
+            copy_target = rpt[FrameBox(1)];
+            copy_target_source = "FrameBox(1)";
+        );
+    );
+
+    Debug_Trace(
+        "copy target resolve | context=" || Char( context_label ) ||
+        " layer=" || Char( layer_key ) ||
+        " source=" || Char( copy_target_source )
+    );
+    copy_target;
+);
+
+Resolve_Live_Report_From_Platform = Function( {platform_obj, layer_key = ""},
+    live_rpt = .;
+    If( !Can_Get_Report( platform_obj ),
+        Return( live_rpt );
+    );
+
+    rpt_obj = .;
+    Try( rpt_obj = platform_obj << Report );
+    rpt_list = Normalize_Report_List( rpt_obj );
+    If( N Items( rpt_list ) <= 0,
+        Return( live_rpt );
+    );
+
+    target_layer = Normalize_Layer_Key( layer_key );
+    If( target_layer != "",
+        // Pass 1: exact layer key extraction (works when title still contains "=LAYER" token)
+        For( i = 1, i <= N Items( rpt_list ), i++,
+            rpt_candidate = rpt_list[i];
+            candidate_layer = Extract_Layer_Key_From_Report( rpt_candidate, "" );
+            If( Normalize_Layer_Key( candidate_layer ) == target_layer,
+                live_rpt = rpt_candidate;
+                Break();
+            );
+        );
+        // Pass 2: title contains target layer key (handles post-format titles like "... NCD NEST M6_TRENCH_HT")
+        If( !Is Scriptable( live_rpt ),
+            For( i = 1, i <= N Items( rpt_list ), i++,
+                rpt_candidate = rpt_list[i];
+                candidate_title = "";
+                Try( candidate_title = Uppercase( Char( rpt_candidate << Get Title ) ) );
+                If( Contains( candidate_title, target_layer ) > 0,
+                    live_rpt = rpt_candidate;
+                    Break();
+                );
+            );
+        );
+    );
+
+    If( !Is Scriptable( live_rpt ),
+        Try( live_rpt = rpt_list[1] );
+    );
+    live_rpt;
+);
+
+Get_FrameBox_Height = Function( {rpt},
+    _h = .;
+    Try(
+        _sz = rpt[FrameBox(1)] << Get Size;
+        If( Is List( _sz ) & N Items( _sz ) >= 2 & _sz[2] > 0,
+            _h = _sz[2];
+        );
+    );
+    If( Is Missing( _h ) | _h <= 0,
+        Try( _h = rpt[FrameBox(1)] << Get Height );
+    );
+    _h;
+);
+
+Get_BorderBox_Height = Function( {rpt, bidx = 1},
+    _h = .;
+    Try(
+        _sz = rpt[BorderBox( bidx )] << Get Size;
+        If( Is List( _sz ) & N Items( _sz ) >= 2 & _sz[2] > 0,
+            _h = _sz[2];
+        );
+    );
+    If( Is Missing( _h ) | _h <= 0,
+        _h = Get_Report_Height( rpt );
+    );
+    _h;
+);
+
+Apply_Target_Report_Height = Function( {rpt, target_h, stat_label, row_label},
+    If( Is Missing( target_h ), Return() );
+    _current_h = Get_Report_Height( rpt );
+    If( Is Missing( _current_h ), Return() );
+
+    If( _current_h < target_h,
+        _delta_h = target_h - _current_h;
+        // Spacer-only padding: keep variability chart frame fixed and compact.
+        Try( rpt << Set Height( target_h ) );
+        Try( rpt << Append( Spacer Box( Size( 1, _delta_h ) ) ) );
+    ,
+        If( _current_h > target_h,
+            Try( rpt << Set Height( target_h ) );
+        );
+    );
+
+    _final_h = Get_Report_Height( rpt );
+    Debug_Trace(
+        "ALIGN FRAMEBOX | stat=" || Char( stat_label ) ||
+        " row=" || Char( row_label ) ||
+        " current=" || Char( _current_h ) ||
+        " target=" || Char( target_h ) ||
+        " final=" || Char( _final_h )
+    );
+);
+
+Align_ByGroup_Row_Heights = Function( {stat_label, trend_obj, var_obj, row_pad = 0},
+    If( !Can_Get_Report( trend_obj ) | !Can_Get_Report( var_obj ),
+        Return();
+    );
+
+    _tr_reports = Normalize_Report_List( trend_obj << Report );
+    _vr_reports = Normalize_Report_List( var_obj << Report );
+    _trend_h_by_layer = Associative Array();
+
+    // Build targets from full trend report heights (HCCD parity behavior).
+    For( _ri = 1, _ri <= N Items( _tr_reports ), _ri++,
+        _tr = _tr_reports[_ri];
+        _row_label = Try( _tr << Get Title, "ROW#" || Char( _ri ) );
+        _layer_key = Extract_Layer_Key_From_Report( _tr, "ROW#" || Char( _ri ) );
+        _th = .;
+        Try( _th = Get_Report_Height( _tr ) );
+        If( !Is Missing( _th ),
+            _trend_h_by_layer[_layer_key] = _th;
+        );
+    );
+
+    // Match each variability row to its trend counterpart (+ optional pad).
+    For( _ri = 1, _ri <= N Items( _vr_reports ), _ri++,
+        _vr = _vr_reports[_ri];
+        _row_label = Try( _vr << Get Title, "ROW#" || Char( _ri ) );
+        _layer_key = Extract_Layer_Key_From_Report( _vr, "ROW#" || Char( _ri ) );
+
+        _target_h = .;
+        Try( _target_h = _trend_h_by_layer[_layer_key] );
+        If( Is Missing( _target_h ) & _ri <= N Items( _tr_reports ),
+            Try( _target_h = Get_Report_Height( _tr_reports[_ri] ) );
+        );
+        If( Is Missing( _target_h ), Continue() );
+
+        _target_h = _target_h + Max( 0, row_pad );
+        Apply_Target_Report_Height( _vr, _target_h, stat_label, _row_label );
+        Debug_Trace(
+            "ALIGN VAR->TREND | stat=" || Char( stat_label ) ||
+            " row=" || Char( _row_label ) ||
+            " target=" || Char( _target_h ) ||
+            " pad=" || Char( row_pad )
+        );
+    );
+);
+
+Align_Copy_Outline_Heights = Function( {stat_label, trend_obj, panel_key = "MEAN"},
+    If( !Can_Get_Report( trend_obj ),
+        Return();
+    );
+
+    use_sigma_panel = Uppercase( Char( panel_key ) ) == "SIGMA";
+    If( use_sigma_panel,
+        copy_layer_boxes = copy_layer_boxes_sigma_runtime;
+        copy_layer_spacers = copy_layer_spacers_sigma_runtime;
+        inner_pad = copy_outline_inner_pad_sigma;
+        panel_height_adjust = 0;
+    ,
+        copy_layer_boxes = copy_layer_boxes_mean_runtime;
+        copy_layer_spacers = copy_layer_spacers_mean_runtime;
+        inner_pad = copy_outline_inner_pad_mean;
+        panel_height_adjust = copy_mean_panel_height_adjust;
+    );
+
+    _tr_reports = Normalize_Report_List( trend_obj << Report );
+    For( _ri = 1, _ri <= N Items( _tr_reports ), _ri++,
+        _tr = _tr_reports[_ri];
+        _target_h = Get_Report_Height( _tr );
+        _layer_key = Extract_Layer_Key_From_Report( _tr, "ROW#" || Char( _ri ) );
+        If( Is Missing( _target_h ) | _layer_key == "",
+            Continue();
+        );
+
+        _btn_box = .;
+        _spacer = .;
+        Try( _btn_box = copy_layer_boxes[_layer_key] );
+        Try( _spacer = copy_layer_spacers[_layer_key] );
+        If( !Is Scriptable( _btn_box ) | !Is Scriptable( _spacer ),
+            Continue();
+        );
+
+        _btn_h = Get_Report_Height( _btn_box );
+        If( Is Missing( _btn_h ), _btn_h = 0 );
+
+        _spacer_h = Max( 0, _target_h - _btn_h - inner_pad + panel_height_adjust );
+        Try( _spacer << Set Size( 1, _spacer_h ) );
+        Debug_Trace(
+            "COPY ALIGN | stat=" || Char( stat_label ) ||
+            " layer=" || Char( _layer_key ) ||
+            " target_h=" || Char( _target_h ) ||
+            " btn_h=" || Char( _btn_h ) ||
+            " spacer_h=" || Char( _spacer_h ) ||
+            " adjust=" || Char( panel_height_adjust )
+        );
+    );
+);
+
+Equalize_Var_FrameBox_Heights = Function( {stat_label, var_obj_list, boost_px = 0},
+    _boost = Max( 0, boost_px );
+    _max_h_by_layer = Associative Array();
+
+    // Pass 1: find max frame height per layer across var groups.
+    For( _oi = 1, _oi <= N Items( var_obj_list ), _oi++,
+        _obj = var_obj_list[_oi];
+        If( !Can_Get_Report( _obj ), Continue() );
+        _reports = Normalize_Report_List( _obj << Report );
+        For( _ri = 1, _ri <= N Items( _reports ), _ri++,
+            _rpt = _reports[_ri];
+            _layer_key = Extract_Layer_Key_From_Report( _rpt, "ROW#" || Char( _ri ) );
+            _fh = Get_FrameBox_Height( _rpt );
+            If( Is Missing( _fh ), Continue() );
+            _cur_max = .;
+            Try( _cur_max = _max_h_by_layer[_layer_key] );
+            If( Is Missing( _cur_max ) | _fh > _cur_max,
+                _max_h_by_layer[_layer_key] = _fh;
+            );
+        );
+    );
+
+    // Pass 2: set each var frame to max-per-layer + requested boost.
+    For( _oi = 1, _oi <= N Items( var_obj_list ), _oi++,
+        _obj = var_obj_list[_oi];
+        If( !Can_Get_Report( _obj ), Continue() );
+        _reports = Normalize_Report_List( _obj << Report );
+        For( _ri = 1, _ri <= N Items( _reports ), _ri++,
+            _rpt = _reports[_ri];
+            _layer_key = Extract_Layer_Key_From_Report( _rpt, "ROW#" || Char( _ri ) );
+            _base_target = .;
+            Try( _base_target = _max_h_by_layer[_layer_key] );
+            If( Is Missing( _base_target ), Continue() );
+            _target_h = Max( 80, _base_target + _boost );
+            Try( _rpt[FrameBox(1)] << Set Height( _target_h ) );
+            Debug_Trace(
+                "VAR FRAME EQUALIZE | stat=" || Char( stat_label ) ||
+                " layer=" || Char( _layer_key ) ||
+                " target_frame_h=" || Char( _target_h ) ||
+                " boost=" || Char( _boost )
+            );
+        );
+    );
+);
+
+subentity_fleet_d1v = Build_Subentity_Fleet_List();
+subentity_fleet_f32 = {
+    "AME801_PM1","AME801_PM2","AME801_PM3","AME801_PM4","AME801_PM5","AME801_PM6",
+    "AME802_PM1","AME802_PM2","AME802_PM3","AME802_PM4","AME802_PM5","AME802_PM6",
+    "AME808_PM1","AME808_PM2","AME808_PM3","AME808_PM4","AME808_PM5","AME808_PM6",
+    "AME809_PM1","AME809_PM2","AME809_PM3","AME809_PM4","AME809_PM5","AME809_PM6"
+};
+subentity_picker_visible_d1v = subentity_fleet_d1v;
+subentity_picker_visible_f32 = subentity_fleet_f32;
+subentity_picker_selected = {};
+debug_generate_report = 1;
+
+Debug_Trace = Function( {msg},
+    If( debug_generate_report == 1,
+        Show( "CHAMBER_DISPO_DEBUG", Char( Today() ), msg );
+    );
+);
+
+// ============================================================
+// APPLY_TARGET_REGIME_FILTER
+// Retains only rows in the most recent continuous target regime
+// for each PROD_MOP_PILOT group.
+// Requires: PROD_MOP_PILOT, DATA_COLLECTION_TIME, ALLSTATS_MEAN_TARGET_VALUE
+// ============================================================
+Apply_Target_Regime_Filter = Function( {dt},
+    dt << Sort(
+        By( :PROD_MOP_PILOT, :DATA_COLLECTION_TIME ),
+        Order( Ascending, Ascending ),
+        Replace Table,
+        Output Table( "" )
+    );
+
+    If( Try( Column( dt, "TARGET_GROUP_KEY" ); 1, 0 ) == 0,
+        dt << New Column( "TARGET_GROUP_KEY", Character, Formula( Char( :PROD_MOP_PILOT ) ) );
+    ,
+        Column( dt, "TARGET_GROUP_KEY" ) << Delete Formula;
+        Column( dt, "TARGET_GROUP_KEY" ) << Set Each Value( Char( :PROD_MOP_PILOT ) );
+    );
+
+    If( Try( Column( dt, "TARGET_REGIME_LATEST" ); 1, 0 ) == 0,
+        dt << New Column( "TARGET_REGIME_LATEST", Numeric, Continuous, Format( "Best", 8 ), Set Each Value( 0 ) );
+    ,
+        Column( dt, "TARGET_REGIME_LATEST" ) << Delete Formula;
+        Column( dt, "TARGET_REGIME_LATEST" ) << Set Each Value( 0 );
+    );
+
+    unique_keys = Associative Array( dt:TARGET_GROUP_KEY ) << Get Keys;
+    Debug_Trace( "Target regime filter: groups=" || Char( N Items( unique_keys ) ) );
+
+    For( k = 1, k <= N Items( unique_keys ), k++,
+        gkey = unique_keys[k];
+        rows = dt << Get Rows Where( :TARGET_GROUP_KEY == gkey );
+        If( N Items( rows ) == 0, Continue() );
+
+        n = N Items( rows );
+        last_row = rows[n];
+        last_tgt = Num( dt:ALLSTATS_MEAN_TARGET_VALUE[last_row] );
+
+        If( Is Missing( last_tgt ),
+            For( j = 1, j <= n, j++,
+                dt:TARGET_REGIME_LATEST[rows[j]] = 1;
+            );
+            Debug_Trace( "REGIME " || gkey || " | last target missing, kept all " || Char( n ) || " rows" );
+            Continue();
+        );
+
+        regime_start = n;
+        While( regime_start > 1,
+            prev_tgt = Num( dt:ALLSTATS_MEAN_TARGET_VALUE[rows[regime_start - 1]] );
+            If( Is Missing( prev_tgt ) | prev_tgt != last_tgt,
+                Break();
+            );
+            regime_start = regime_start - 1;
+        );
+
+        For( j = regime_start, j <= n, j++,
+            dt:TARGET_REGIME_LATEST[rows[j]] = 1;
+        );
+
+        Debug_Trace(
+            "REGIME " || gkey ||
+            " | last target=" || Char( last_tgt ) ||
+            " | kept=" || Char( n - regime_start + 1 ) ||
+            " | dropped=" || Char( regime_start - 1 )
+        );
+    );
+
+    before_rows = N Rows( dt );
+    dt << Select Where( :TARGET_REGIME_LATEST != 1 );
+    dt << Delete Rows;
+    dt << Clear Select;
+    Debug_Trace( "Target regime filter complete. Before=" || Char( before_rows ) || " | After=" || Char( N Rows( dt ) ) );
+    dt;
+);
+
+Append_Copy_Button = Function({config, layer_name, button_label, source_platform, source_rpt, debug_tag, panel_key = "MEAN"},
+    Debug_Trace( "Append_Copy_Button enter layer=" || Char( layer_name ) || " label=" || Char( button_label ) || " panel=" || Char( panel_key ) );
+    use_sigma_panel = Uppercase( Char( panel_key ) ) == "SIGMA";
+
+    If( use_sigma_panel,
+        copy_button_list = config["copy_button_list_sigma"];
+        If( !Is Scriptable( copy_button_list ),
+            copy_button_list = copy_button_list_sigma_runtime;
+        );
+        copy_layer_boxes = copy_layer_boxes_sigma_runtime;
+        copy_layer_label_boxes = copy_layer_label_boxes_sigma_runtime;
+        copy_layer_spacers = copy_layer_spacers_sigma_runtime;
+        layer_padding = copy_layer_extra_padding + 24;
+    ,
+        copy_button_list = config["copy_button_list_mean"];
+        If( !Is Scriptable( copy_button_list ),
+            copy_button_list = copy_button_list_mean_runtime;
+        );
+        copy_layer_boxes = copy_layer_boxes_mean_runtime;
+        copy_layer_label_boxes = copy_layer_label_boxes_mean_runtime;
+        copy_layer_spacers = copy_layer_spacers_mean_runtime;
+        layer_padding = copy_layer_extra_padding;
+    );
+
+    If( !Is Scriptable( copy_button_list ),
+        Return();
+    );
+
+    If( !Is Scriptable( copy_layer_boxes ),
+        copy_layer_boxes = Associative Array();
+    );
+    If( !Is Scriptable( copy_layer_label_boxes ),
+        copy_layer_label_boxes = Associative Array();
+    );
+    If( !Is Scriptable( copy_layer_spacers ),
+        copy_layer_spacers = Associative Array();
+    );
+
+    If( use_sigma_panel,
+        copy_layer_boxes_sigma_runtime = copy_layer_boxes;
+        copy_layer_label_boxes_sigma_runtime = copy_layer_label_boxes;
+        copy_layer_spacers_sigma_runtime = copy_layer_spacers;
+    ,
+        copy_layer_boxes_mean_runtime = copy_layer_boxes;
+        copy_layer_label_boxes_mean_runtime = copy_layer_label_boxes;
+        copy_layer_spacers_mean_runtime = copy_layer_spacers;
+    );
+
+    layer_key = Uppercase( Trim( Char( layer_name ) ) );
+    layer_keys = copy_layer_boxes << Get Keys;
+
+    If( !Contains( layer_keys, layer_key ),
+        layer_button_box = V List Box();
+        layer_spacer_box = Spacer Box( Size( 1, layer_padding ) );
+        layer_container_box = V List Box(
+            layer_button_box,
+            layer_spacer_box
+        );
+        copy_button_list << Append(
+            Outline Box( layer_key, layer_container_box )
+        );
+        copy_layer_boxes[layer_key] = layer_button_box;
+        copy_layer_spacers[layer_key] = layer_spacer_box;
+    );
+
+    layer_button_box = copy_layer_boxes[layer_key];
+    If( !Contains( copy_layer_label_boxes << Get Keys, layer_key ),
+        copy_layer_label_boxes[layer_key] = Associative Array();
+    );
+    layer_labels = copy_layer_label_boxes[layer_key];
+    label_key = Uppercase( Trim( Char( button_label ) ) );
+    If( Contains( layer_labels << Get Keys, label_key ),
+        If( use_sigma_panel,
+            copy_layer_boxes_sigma_runtime = copy_layer_boxes;
+            copy_layer_label_boxes_sigma_runtime = copy_layer_label_boxes;
+            copy_layer_spacers_sigma_runtime = copy_layer_spacers;
+        ,
+            copy_layer_boxes_mean_runtime = copy_layer_boxes;
+            copy_layer_label_boxes_mean_runtime = copy_layer_label_boxes;
+            copy_layer_spacers_mean_runtime = copy_layer_spacers;
+        );
+        Return();
+    );
+    layer_labels[label_key] = 1;
+    Eval(
+        Eval Expr(
+            Expr( layer_button_box ) << Append(
+                Button Box( Expr( button_label ),
+                    copy_status = "unknown";
+                    live_rpt = .;
+                    source_rpt_live = .;
+                    click_target = .;
+                    click_target_source = "none";
+                    // Prefer the exact report tied to this button so interactive scale edits are preserved.
+                    Try(
+                        source_rpt_live = Expr( source_rpt );
+                    );
+                    If( Is Scriptable( source_rpt_live ),
+                        Try(
+                            click_target = Resolve_Copy_Target( source_rpt_live, Expr( debug_tag ), Expr( layer_key ) );
+                        );
+                    );
+                    Try(
+                        If( !Is Scriptable( click_target ),
+                            live_rpt = Resolve_Live_Report_From_Platform( Expr( source_platform ), Expr( layer_key ) );
+                        );
+                        If( Is Scriptable( live_rpt ) & !Is Scriptable( click_target ),
+                            click_target = Resolve_Copy_Target( live_rpt, Expr( debug_tag ), Expr( layer_key ) );
+                        );
+                    );
+                    If( Is Scriptable( click_target ),
+                        Try( click_target_source = Char( click_target << Get Display Path ) );
+                    );
+                    If( Is Scriptable( click_target ),
+                        Try(
+                            click_target << Copy Picture;
+                            copy_status = "copied";
+                        ,
+                            copy_status = "copy_error_skipped";
+                        );
+                    ,
+                        copy_status = "no_scriptable_target";
+                    );
+                    If( copy_pic_debug == 1,
+                        Print( "COPY DEBUG [" || Expr( debug_tag ) || "] layer=" || Expr( layer_key ) || " button=" || Expr( button_label ) || " copy_status=" || copy_status || " target=" || click_target_source || " src_rpt=" || Char( Is Scriptable( source_rpt_live ) ) || " live_rpt=" || Char( Is Scriptable( live_rpt ) ) );
+                    );
+                )
+            )
+        )
+    );
+    Debug_Trace( "Append_Copy_Button appended layer=" || Char( layer_key ) || " label=" || Char( button_label ) || " panel=" || Char( panel_key ) );
+
+    // Persist per-panel layer/group state so later calls append to the same layer outline.
+    If( use_sigma_panel,
+        copy_layer_boxes_sigma_runtime = copy_layer_boxes;
+        copy_layer_label_boxes_sigma_runtime = copy_layer_label_boxes;
+        copy_layer_spacers_sigma_runtime = copy_layer_spacers;
+    ,
+        copy_layer_boxes_mean_runtime = copy_layer_boxes;
+        copy_layer_label_boxes_mean_runtime = copy_layer_label_boxes;
+        copy_layer_spacers_mean_runtime = copy_layer_spacers;
+    );
+);
+
+// ============================================================
+// FORMATTING FUNCTIONS
+// ============================================================
+Format_Trend_Charts = Function({trend_chart_object, type, config},
+    // Extract values from config associative array
+    recent_limits_mdttucl = config["recent_limits_mdttucl"];
+    recent_limits_mdttcl = config["recent_limits_mdttcl"];
+    recent_limits_mdttlcl = config["recent_limits_mdttlcl"];
+    recent_limits_sdttucl = config["recent_limits_sdttucl"];
+    recent_limits_sdttcl = config["recent_limits_sdttcl"];
+    recent_limits_sdttlcl = config["recent_limits_sdttlcl"];
+    legendcol1 = config["legendcol1"];
+    //legendcol2 = config["legendcol2"];
+    UCL_COLOR = config["UCL_COLOR"];
+    CL_COLOR = config["CL_COLOR"];
+    LCL_COLOR = config["LCL_COLOR"];
+    ucl_label = config["ucl_label"];
+    cl_label = config["cl_label"];
+    lcl_label = config["lcl_label"];
+    yinc = config["yinc"];
+    tinc = config["tinc"];
+    val_show_splines = config["show_splines"];
+    tech_str = config["tech_str"];
+    dataset_title_str = config["dataset_title_str"];
+    If( Is Missing( dataset_title_str ) | dataset_title_str == "",
+        dataset_title_str = tech_str;
+    );
+    dataset_title_str = config["dataset_title_str"];
+    If( Is Missing( dataset_title_str ) | dataset_title_str == "",
+        dataset_title_str = tech_str;
+    );
+    time_axis_min = config["time_axis_min"];
+    time_axis_max = config["time_axis_max"];
+    single_layer_key = Try( config["single_layer_key"], "" );
+    no_limits = Try( config["no_limits"], 0 );
+
+    Treports = Normalize_Report_List( trend_chart_object << Report );
+    Debug_Trace( "Format_Trend_Charts start type=" || Char( type ) || " reports=" || Char( N Items( Treports ) ) );
+    j=0;
+    // Lazy-build layer → TEST_NAME map (shared via config; pre-built here so Trend titles resolve before Variability Charts run)
+    If( !Is Associative Array( Try( config["layer_to_testname"], . ) ),
+        _lttn = Associative Array();
+        _bycol = Try( config["bycol1"], "" );
+        _dt_ref = Try( config["dt"], Current Data Table() );
+        If( Is Scriptable( _dt_ref ) & _bycol != "",
+            Try(
+                _lk_col = Column( _dt_ref, _bycol );
+                _tn_col = Column( _dt_ref, "TEST_NAME" );
+                _nr = N Rows( _dt_ref );
+                For( _i = 1, _i <= _nr, _i++,
+                    _lk = Uppercase( Trim( Char( _lk_col[_i] ) ) );
+                    _tn = Trim( Char( _tn_col[_i] ) );
+                    If( _lk != "" & _tn != "",
+                        _lttn[_lk] = _tn;
+                    );
+                );
+            );
+        );
+        config["layer_to_testname"] = _lttn;
+    );
+    
+    If(type=="ALL",
+        rpt=Treports[1];
+//        rpt[Frame Box(1)] << Row Legend(:TEST_NAME, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:APC_PRODGROUP, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:PRODUCT_GROUP, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:ALLSTATS_STANDARD_FLAG, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:STATISTICS_MEAN_DTT_STANDARD_FLAG, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:STATISTICS_MEAN_DTT_VIOLATED_RULE_NOTATION, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:STATISTICS_SIGMA_DTT_STANDARD_FLAG, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:STATISTICS_SIGMA_DTT_VIOLATED_RULE_NOTATION, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));		
+//        rpt[Frame Box(1)] << Row Legend(:SCANNER, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:ROUTE_TYPE, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:LOT_TYPE, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:IS_POR, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:APC_FB_SUC, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:APC_AREA, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+//        rpt[Frame Box(1)] << Row Legend(:SPC_PILOT_NAME, Color(0), Color Theme(""), Marker(0), Marker Theme(""), Continuous Scale(0), Reverse Scale(0), Excluded Rows(0));
+
+        Try( rpt[1][Frame Box(1)]  << Row Legend(Column( legendcol1 ),Color( 0 ),Color Theme( "" ),Marker( 0 ),Marker Theme( "" ),Continuous Scale( 0 ),Reverse Scale( 0 ),Excluded Rows( 0 )); );
+        Try( rpt[Frame Box(1)]  << Row Legend(Column( legendcol1 ),Color( 0 ),Color Theme( "" ),Marker( 0 ),Marker Theme( "" ),Continuous Scale( 0 ),Reverse Scale( 0 ),Excluded Rows( 0 )); );
+        Debug_Trace( "trend all: legend attempted" );
+        Try( rpt[1][Frame Box(1)] << {Marker Drawing Mode("Outlined")}; );
+		Try( rpt[AxisBox(1)] << Axis Settings({Min(-3), Max(3), Inc(yinc),Minor Ticks(1)}); );
+        Try( rpt[ScaleBox(1)] << {
+            Interval("Week"),
+            Inc(tinc),
+            Minor Ticks(0),
+            Label Row({
+                Label Orientation("Angled"),
+                Show Major Grid(1),
+                Show Minor Grid(1)
+            })
+        }; );
+        If( !Is Missing( time_axis_min ) & !Is Missing( time_axis_max ),
+            Try(
+                rpt[ScaleBox(1)] << Min( time_axis_min );
+                rpt[ScaleBox(1)] << Max( time_axis_max );
+            );
+        );
+
+        Try( rpt << Set Title( "ALL LAYERS" ); );	
+    ,
+        For Each( {rpt}, Treports,
+            j=j+1;
+            Debug_Trace( "Format_Trend_Charts panel start type=" || Char( type ) || " panel=" || Char( j ) );
+            current_by_value = Try( rpt << Get Title, "" );
+
+            Try( rpt[1][Frame Box(1)]  << Row Legend(Column( legendcol1 ),Color( 0 ),Color Theme( "" ),Marker( 0 ),Marker Theme( "" ),Continuous Scale( 0 ),Reverse Scale( 0 ),Excluded Rows( 0 )); );
+            Debug_Trace( "trend by: legend attempted panel=" || Char( j ) );
+            //rpt[1][Frame Box(1)]  << Row Legend(Column( legendcol2 ),Color( 0 ),Color Theme( "" ),Marker( 0 ),Marker Theme( "" ),Continuous Scale( 0 ),Reverse Scale( 0 ),Excluded Rows( 0 ));
+
+            Try( rpt[1][Frame Box(1)] << {Marker Drawing Mode("Outlined")}; );
+            
+            // Parse report title defensively; single-chart fallback paths may not include " By ".
+            of_pos = Contains(current_by_value, "of ");
+            by_pos = Contains(current_by_value, " By ");
+
+            If( of_pos > 0 & by_pos > of_pos,
+                // Extract Y column name between "of " and " By"
+                y_col_name = Substr(current_by_value, of_pos + 3, by_pos - of_pos - 3);
+                layer_value = Word(-1, current_by_value, "=");
+            ,
+                y_col_name = Char( current_by_value );
+                layer_value = "ALL";
+            );
+            If( Is Missing( layer_value ) | layer_value == "" | layer_value == "ALL",
+                If( single_layer_key != "",
+                    layer_value = single_layer_key;
+                ,
+                    layer_value = "PANEL_" || Char( j );
+                );
+            );
+            layer_key = Normalize_Layer_Key( layer_value );
+            y_col_display = Substitute(y_col_name, "_", " ");
+            
+            If(type!="APC",
+                trend_stat_suffix = Substitute( Substitute( Substitute( y_col_display, "ALLSTATS ", "" ), "STATISTICS ", "" ), " VALUE", "" );
+                _trend_tn = Try( config["layer_to_testname"][Uppercase( layer_value )], "" );
+                new_title = Try( config["tech_node_str"], "1278" ) || " " || Try( config["site_str"], "D1V" ) || " NCD " || layer_value || If( _trend_tn != "", " " || _trend_tn, "" ) || " " || trend_stat_suffix;
+
+                If(type=="MEAN" & no_limits != 1,
+                    lim_mdtucl = Try( recent_limits_mdttucl[layer_key], . );
+                    lim_mdtcl = Try( recent_limits_mdttcl[layer_key], . );
+                    lim_mdtlcl = Try( recent_limits_mdttlcl[layer_key], . );
+                    If( !Is Missing( lim_mdtucl ) & !Is Missing( lim_mdtcl ) & !Is Missing( lim_mdtlcl ),
+                        rpt[AxisBox(1)] << Add Ref Line( lim_mdtucl, "Solid", UCL_COLOR, ucl_label);
+                        rpt[AxisBox(1)] << Add Ref Line( lim_mdtcl, "Solid", CL_COLOR, cl_label);
+                        rpt[AxisBox(1)] << Add Ref Line( lim_mdtlcl, "Solid", LCL_COLOR, lcl_label );
+                        rpt[AxisBox(1)] << Axis Settings({Min(1.1*lim_mdtlcl), Max(1.1*lim_mdtucl), Inc(yinc),Minor Ticks(1)});
+                        Debug_Trace( "trend mean: ref lines applied layer=" || layer_key );
+                    ,
+                        Debug_Trace( "trend mean: ref lines missing layer=" || layer_key );
+                    );
+                ); 
+                    
+                If(type=="SIGMA" & no_limits != 1,
+                    lim_sdtucl = Try( recent_limits_sdttucl[layer_key], . );
+                    lim_sdtcl = Try( recent_limits_sdttcl[layer_key], . );
+                    lim_sdtlcl = Try( recent_limits_sdttlcl[layer_key], . );
+                    If( !Is Missing( lim_sdtucl ) & !Is Missing( lim_sdtcl ) & !Is Missing( lim_sdtlcl ),
+                        rpt[AxisBox(1)] << Add Ref Line( lim_sdtucl, "Solid", UCL_COLOR, ucl_label);
+                        rpt[AxisBox(1)] << Add Ref Line( lim_sdtcl, "Solid", CL_COLOR, cl_label);
+                        rpt[AxisBox(1)] << Add Ref Line( lim_sdtlcl, "Solid", LCL_COLOR, lcl_label );
+                        rpt[AxisBox(1)] << Axis Settings({Min(1.1*lim_sdtlcl), Max(1.1*lim_sdtucl), Inc(yinc),Minor Ticks(1)});		
+                        Debug_Trace( "trend sigma: ref lines applied layer=" || layer_key );
+                    ,
+                        Debug_Trace( "trend sigma: ref lines missing layer=" || layer_key );
+                    );
+                ); 
+            ,
+                new_title = y_col_display || " " || layer_value;
+            );
+
+            Try( rpt[ScaleBox(1)] << {
+                Interval("Week"), 
+                Inc(tinc),
+                Minor Ticks(0),
+                Label Row({
+                    Label Orientation("Angled"),
+                    Show Major Grid(1),
+                    Show Minor Grid(1)
+                })
+            }; );		
+            If( !Is Missing( time_axis_min ) & !Is Missing( time_axis_max ),
+                Try(
+                    rpt[ScaleBox(1)] << Min( time_axis_min );
+                    rpt[ScaleBox(1)] << Max( time_axis_max );
+                );
+            );
+
+            Try( rpt << Set Title( new_title ); );	
+
+            Try( Hide_Spline_Control_Box( rpt, layer_key ) );
+            Try( rpt[FrameBox(1)]  <<Set Height( rowFBheight ); );
+            Try( rpt[FrameBox(1)]  <<Set Width( 500 ); );
+
+            trend_axisbox2_height = 18;
+            Try(
+                trend_axis2_size = rpt[AxisBox(2)] << Get Size;
+                If( N Items( trend_axis2_size ) >= 2,
+                    trend_axisbox2_height = Num( trend_axis2_size[2] );
+                );
+            );
+            If( type == "MEAN",
+                config["trend_axisbox2_height_mean"] = trend_axisbox2_height;
+                trend_axisbox2_map_mean = config["trend_axisbox2_map_mean"];
+                trend_axisbox2_map_mean[layer_key] = trend_axisbox2_height;
+            ,
+                If( type == "SIGMA",
+                    config["trend_axisbox2_height_sigma"] = trend_axisbox2_height;
+                    trend_axisbox2_map_sigma = config["trend_axisbox2_map_sigma"];
+                    trend_axisbox2_map_sigma[layer_key] = trend_axisbox2_height;
+                );
+            );
+            Debug_Trace( "Trend axisbox2 | type=" || Char( type ) || " layer=" || Char( layer_key ) || " axisbox2_h=" || Char( trend_axisbox2_height ) );
+
+            // Use report object directly as copy target, matching stable layer-script behavior.
+            If( type == "MEAN",
+                button_label = "TrendMEAN";
+                panel_key = "MEAN";
+            ,
+                If( type == "SIGMA",
+                    button_label = "TrendSIGMA";
+                    panel_key = "SIGMA";
+                ,
+                    button_label = "TrendAPC";
+                    panel_key = "MEAN";
+                );
+            );
+            Try( Append_Copy_Button( config, layer_key, button_label, trend_chart_object, rpt, "Trend", panel_key ); );
+            Debug_Trace( "trend panel: copy append attempted layer=" || layer_key || " label=" || button_label );
+            Debug_Trace( "Format_Trend_Charts panel done type=" || Char( type ) || " panel=" || Char( j ) );
+        );
+    );
+    
+	Try( axisbox = rpt[axis box( 1 )]; axisbox << Show Major Grid( 1 ); axisbox << Show Minor Grid( 1 ); );
+    Try( axisbox = rpt[axis box( 2 )]; axisbox << Show Major Grid( 1 ); axisbox << Show Minor Grid( 1 ); );
+	
+);	
+
+Format_Variability_Charts = Function({var_chart_object, stat, type, xcol, config,vcol, button_label_override},
+
+    // Extract values from config associative array
+    recent_limits_mdttucl = config["recent_limits_mdttucl"];
+    recent_limits_mdttcl = config["recent_limits_mdttcl"];
+    recent_limits_mdttlcl = config["recent_limits_mdttlcl"];
+    recent_limits_sdttucl = config["recent_limits_sdttucl"];
+    recent_limits_sdttcl = config["recent_limits_sdttcl"];
+    recent_limits_sdttlcl = config["recent_limits_sdttlcl"];
+    UCL_COLOR = config["UCL_COLOR"];
+    CL_COLOR = config["CL_COLOR"];
+    LCL_COLOR = config["LCL_COLOR"];
+    ucl_label = config["ucl_label"];
+    cl_label = config["cl_label"];
+    lcl_label = config["lcl_label"];
+    ymin = config["ymin"];
+    ymax = config["ymax"];
+    yinc = config["yinc"];
+    varchart_group_width = config["varchart_group_width"];
+    tech_str = config["tech_str"];
+    dataset_title_str = Try( config["dataset_title_str"], "" );
+    If( Is Missing( dataset_title_str ) | dataset_title_str == "",
+        dataset_title_str = tech_str;
+    );
+    no_limits = Try( config["no_limits"], 0 );
+    single_layer_key = Try( config["single_layer_key"], "" );
+    measure_label = Try( config["measure_label"], "DTT" );
+    button_label = button_label_override;
+    // Unified panel title components
+    site_str = Try( config["site_str"], "D1V" );
+    tech_node_str = Try( config["tech_node_str"], "1278" );
+    ycol_current = If( type == "TARGET",
+        If( stat == "MEAN", config["ycol3"], config["ycol4"] ),
+        If( stat == "MEAN", config["ycol0"], config["ycol2"] )
+    );
+    ob3_label = Substitute( Substitute( Substitute( ycol_current, "ALLSTATS_", "" ), "STATISTICS_", "" ), "_VALUE", "" );
+    ob3_label = Substitute( ob3_label, "_", " " );
+    ob3_label = ob3_label || " BY " || Substitute( vcol, "_", " " );
+    // Lazy-build layer → TEST_NAME display map for OB2 (built once per Format_Variability_Charts call)
+    If( !Is Associative Array( Try( config["layer_to_testname"], . ) ),
+        _lttn = Associative Array();
+        _bycol = Try( config["bycol1"], "" );
+        _dt_ref = Try( config["dt"], Current Data Table() );
+        If( Is Scriptable( _dt_ref ) & _bycol != "",
+            Try(
+                _lk_col = Column( _dt_ref, _bycol );
+                _tn_col = Column( _dt_ref, "TEST_NAME" );
+                _nr = N Rows( _dt_ref );
+                For( _i = 1, _i <= _nr, _i++,
+                    _lk = Uppercase( Trim( Char( _lk_col[_i] ) ) );
+                    _tn = Trim( Char( _tn_col[_i] ) );
+                    If( _lk != "" & _tn != "",
+                        _lttn[_lk] = _tn;
+                    );
+                );
+            );
+        );
+        config["layer_to_testname"] = _lttn;
+    );
+            
+    Vreports=Normalize_Report_List( var_chart_object << Report );
+    Debug_Trace( "Format_Variability_Charts start stat=" || Char( stat ) || " type=" || Char( type ) || " reports=" || Char( N Items( Vreports ) ) );
+    j=0;
+    For Each( {rpt}, Vreports,
+        j=j+1;
+        Debug_Trace( "Format_Variability_Charts panel start stat=" || Char( stat ) || " type=" || Char( type ) || " panel=" || Char( j ) );
+        current_by_value = Try( rpt << Get Title, "" );
+
+        Try( rpt[1][Frame Box(1)] << {Marker Drawing Mode("Outlined")}; );
+
+        // Extract BY value for this panel (ALLSTATS_PARAMETER_NAME)
+        wec_layer = Extract_Layer_Key_From_Report( rpt, "PANEL_" || Char( j ) );
+        If( Is Missing( wec_layer ) | wec_layer == "",
+            If( single_layer_key != "",
+                wec_layer = single_layer_key;
+            ,
+                wec_layer = "PANEL_" || Char( j );
+            );
+        );
+        wec_layer_key = Normalize_Layer_Key( wec_layer );
+        Try( rpt[1][OutlineBox(2)] << Set Title( ob3_label ); );
+
+        ob2_display = Try( config["layer_to_testname"][Uppercase( wec_layer )], wec_layer );
+        Try( rpt[1][OutlineBox(1)] << Set Title( ob2_display ); );
+        
+        Try( axisbox = rpt[1][axis box( 1 )]; axisbox << Show Major Grid( 1 ); axisbox << Show Minor Grid( 1 ); );
+        Try( axisbox = rpt[1][axis box( 2 )]; axisbox << Show Major Grid( 1 ); axisbox << Show Minor Grid( 1 ); );
+    
+        Try( axisbox = rpt[axis box( 1 )]; axisbox << Show Major Grid( 1 ); axisbox << Show Minor Grid( 1 ); );
+        Try( axisbox = rpt[axis box( 2 )]; axisbox << Show Major Grid( 1 ); axisbox << Show Minor Grid( 1 ); );
+    
+        Try(
+            mySegs=rpt[FrameBox(1)]<< find segs;
+            Filter Each({seg},(mySegs), (seg<< class name)=="BoxPlotSeg") << Set Line Color("Black");
+        );
+        Try(
+            mySegs=rpt[FrameBox(1)]<< find segs;
+            Filter Each({seg},(mySegs), (seg<< class name)=="BoxPlotSeg") << Set Line Color("Black");
+        );
+        If(type=="DTT",	
+            If(stat=="MEAN",				
+                Try( rpt << Set Title( tech_node_str || " " || site_str || " NCD " || wec_layer ); );
+                If( no_limits != 1,
+                    lim_mdtucl = Try( recent_limits_mdttucl[wec_layer_key], . );
+                    lim_mdtcl = Try( recent_limits_mdttcl[wec_layer_key], . );
+                    lim_mdtlcl = Try( recent_limits_mdttlcl[wec_layer_key], . );
+                    If( !Is Missing( lim_mdtucl ) & !Is Missing( lim_mdtcl ) & !Is Missing( lim_mdtlcl ),
+                        rpt[AxisBox(1)] << Add Ref Line( lim_mdtucl, "Solid", UCL_COLOR, ucl_label);
+                        rpt[AxisBox(1)] << Add Ref Line( lim_mdtcl, "Solid", CL_COLOR, cl_label);
+                        rpt[AxisBox(1)] << Add Ref Line( lim_mdtlcl, "Solid", LCL_COLOR, lcl_label );
+                        rpt[AxisBox(1)] << Axis Settings({Min(1.1*lim_mdtlcl), Max(1.1*lim_mdtucl), Inc(yinc),Minor Ticks(0),Label Orientation("Angled")});
+                        Debug_Trace( "var mean: ref lines applied layer=" || wec_layer_key );
+                    ,
+                        Debug_Trace( "var mean: ref lines missing layer=" || wec_layer_key );
+                    );
+                );
+            ); 
+                
+            If(stat=="SIGMA",
+                Try( rpt << Set Title( tech_node_str || " " || site_str || " NCD " || wec_layer ); );
+                If( no_limits != 1,
+                    Try( rpt[AxisBox(1)] << Axis Settings({Min(ymin), Max(ymax), Inc(yinc),Minor Ticks(0)}); );
+                    lim_sdtucl = Try( recent_limits_sdttucl[wec_layer_key], . );
+                    lim_sdtcl = Try( recent_limits_sdttcl[wec_layer_key], . );
+                    lim_sdtlcl = Try( recent_limits_sdttlcl[wec_layer_key], . );
+                    If( !Is Missing( lim_sdtucl ) & !Is Missing( lim_sdtcl ) & !Is Missing( lim_sdtlcl ),
+                        rpt[AxisBox(1)] << Add Ref Line( lim_sdtucl, "Solid", UCL_COLOR, ucl_label);
+                        rpt[AxisBox(1)] << Add Ref Line( lim_sdtcl, "Solid", CL_COLOR, cl_label);
+                        rpt[AxisBox(1)] << Add Ref Line( lim_sdtlcl, "Solid", LCL_COLOR, lcl_label );
+                        rpt[AxisBox(1)] << Axis Settings({Min(1.1*lim_sdtlcl), Max(1.1*lim_sdtucl), Inc(yinc),Minor Ticks(0)});			
+                        Debug_Trace( "var sigma: ref lines applied layer=" || wec_layer_key );
+                    ,
+                        Debug_Trace( "var sigma: ref lines missing layer=" || wec_layer_key );
+                    );
+                );
+            ); 
+            
+            varchart_groups = Try( rpt[AxisBox(2)] << Get Max, 1 );
+            varchart_width=varchart_groups*varchart_group_width*.6;
+            framebox=Try( rpt[FrameBox(1)], . );
+            Try( framebox <<Set Width( varchart_width ); );
+            Try( framebox << Get Size; );
+            
+            // Determine AxisBox(2) height based on vcol and number of X grouping levels.
+            // framebox height = rowFBheight - axisbox2_height keeps total chart height consistent.
+            If(vcol == "PROD_MOP_PILOT",
+                axisbox2_height = If(xcol == 2, prod_mop_pilot_height + chvfl_height, prod_mop_pilot_height);
+                Try( rpt[AxisBox(2)] << Axis Settings({Label Orientation("Angled")}); );
+            ,
+                axisbox2_height = If(xcol == 2, chvfl_height * 2, chvfl_height);
+            );
+            varchart_axisbox = Try( rpt[AxisBox(2)], . );
+            Try( varchart_axisbox << Set Height(axisbox2_height); );
+
+            trend_axisbox2_height_target = 18;
+            If( stat == "SIGMA",
+                trend_axisbox2_map_sigma = config["trend_axisbox2_map_sigma"];
+                Try( trend_axisbox2_height_target = trend_axisbox2_map_sigma[wec_layer_key] );
+                If( Is Missing( trend_axisbox2_height_target ),
+                    Try( trend_axisbox2_height_target = config["trend_axisbox2_height_sigma"] );
+                );
+            ,
+                trend_axisbox2_map_mean = config["trend_axisbox2_map_mean"];
+                Try( trend_axisbox2_height_target = trend_axisbox2_map_mean[wec_layer_key] );
+                If( Is Missing( trend_axisbox2_height_target ),
+                    Try( trend_axisbox2_height_target = config["trend_axisbox2_height_mean"] );
+                );
+            );
+            If( Is Missing( trend_axisbox2_height_target ),
+                trend_axisbox2_height_target = 18;
+            );
+
+            // HCCD parity: compensate var frame by axisbox2 delta to avoid stretching.
+            frame_height = rowFBheight + trend_axisbox2_height_target - axisbox2_height - 100;
+            frame_height = Max( 80, frame_height );
+            Try( framebox << Set Height(frame_height); );
+            Debug_Trace(
+                "Var sizing | stat=" || Char( stat ) ||
+                " layer=" || Char( wec_layer_key ) ||
+                " vcol=" || Char( vcol ) ||
+                " trend_axisbox2_target_h=" || Char( trend_axisbox2_height_target ) ||
+                " axisbox2_actual_h=" || Char( axisbox2_height ) ||
+                " frame_h=" || Char( frame_height )
+            );
+
+            If(xcol == 2,
+                // Single chamber - use XPath with the wec_layer value
+                target_textbox = rpt << XPath("(//OutlineBox[text()='ANALYSIS']//OutlineBox[text()='" || wec_layer || "']//TextBox)[2]");
+                If(N Items(target_textbox) > 0,
+                    Try( target_textbox[1] << Set Text(""); );
+                );
+            ,
+                // Multiple chambers - check if TextBox(3) exists before accessing
+                text_boxes = rpt << XPath("//TextBox");
+                If(N Items(text_boxes) >= 3,
+                    Try( rpt[TextBox(3)] << Set Text(""); );
+                );
+            );
+            Try( rpt[TextBox(2)] << Set Text(""); );
+
+            panel_key = If( stat == "SIGMA", "SIGMA", "MEAN" );
+            Try( Append_Copy_Button( config, wec_layer_key, button_label, var_chart_object, ., "Var", panel_key ); );
+            Debug_Trace( "var panel: copy append attempted layer=" || wec_layer_key || " label=" || button_label );
+
+            
+        , //ELSE TYPE == TARGET
+            If(stat=="MEAN",
+                Try( rpt << Set Title( tech_node_str || " " || site_str || " NCD " || wec_layer ); );
+            ); 
+                
+            If(stat=="SIGMA",
+                Try( rpt << Set Title( tech_node_str || " " || site_str || " NCD " || wec_layer ); );
+            ); 
+            
+            varchart_groups=Try( rpt[AxisBox(2)] << Get Max, 1 );
+            varchart_width=varchart_groups*varchart_group_width*0.6;
+            framebox=Try( rpt[FrameBox(1)], . );
+            Try( framebox   <<Set Width( varchart_width ); );
+            
+            varchart_axisbox=Try( rpt[AxisBox(2)], . );			
+            Try( varchart_axisbox <<Set Height( prod_mop_pilot_height ); );
+            // Keep target var charts compact; do not stretch data frame to match row height.
+            frame_height = 228 - 160;
+            frame_height = Max( 80, frame_height );
+            Try( framebox <<Set Height( frame_height ); );
+
+            button_label = "VarTAR";
+            panel_key = If( stat == "SIGMA", "SIGMA", "MEAN" );
+            Try( Append_Copy_Button( config, wec_layer_key, button_label, var_chart_object, ., "Var", panel_key ); );
+            Debug_Trace( "var target: copy append attempted layer=" || wec_layer_key || " label=" || button_label );
+        ); 
+        Debug_Trace( "Format_Variability_Charts panel done stat=" || Char( stat ) || " type=" || Char( type ) || " panel=" || Char( j ) );
+    );
+);
+
+// ============================================================
+// MAIN DATA PROCESSING FUNCTION
+// ============================================================
+ProcessSDTTData = Function({val_cb_close_reports_and_windows, chamber_list, selected_member, val_include_sigma, val_no_splines, dlg_win, val_current_target_only = 0, val_include_nonstd = 0, val_include_nonvalid = 0},
+    
+    // NCD chamber dispo is currently fixed to 1278 D1V MT6 dataset.
+    tech_str = "1278";
+    dataset_title_str = "1278 D1V NCD MT6";
+
+    // Configuration object
+    config = Associative Array();
+    config["window_title"] = dataset_title_str || " Chamber Dispo Report";
+    config["site_str"] = "D1V";
+    config["tech_node_str"] = "1278";
+    config["varchart_group_width"] = 40;
+    config["LIMIT_COLOR"] = "Black";
+    config["vcol1"] = "CHAMBER";	
+    config["vcol2"] = "PROD_MOP_PILOT";
+    config["vcol3"] = "PROD_MOP_PILOT";
+    config["bycol1"] = "ALLSTATS_PARAMETER_NAME";		
+    config["xcol"] = "DATA_COLLECTION_TIME";		
+    config["legendcol1"] = "CHAMBER";		
+    //config["legendcol2"] = "PRODUCT_GROUP";
+    config["title"] = "SDTT";	
+    config["ycol0"] = "ALLSTATS_MEAN_DTT_VALUE";	
+    config["ycol1"] = "";	
+    config["ycol2"] = "ALLSTATS_SIGMA_DTT_VALUE";
+    config["ycol3"] = "ALLSTATS_MEAN_TARGET_VALUE";
+    config["ycol4"] = "ALLSTATS_SIGMA_TARGET_VALUE";
+    config["filter_str"] = "NCD SDTT";
+    config["UZ1_COLOR"] = "Blue";
+    config["uz1_label"] = "UZ1";
+    config["UCL_COLOR"] = "Red";
+    config["ucl_label"] = "UCL";
+    config["CL_COLOR"] = "Black";
+    config["cl_label"] = "";
+    config["LCL_COLOR"] = "Red";
+    config["lcl_label"] = "LCL";
+    config["LZ1_COLOR"] = "Blue";
+    config["lz1_label"] = "LZ1";
+    config["ymin"] = -1.5;
+    config["ymax"] = 1.5;
+    config["tinc"] = 1;
+    config["yinc"] = 0.2;
+    config["jittered"] = 0;
+    config["show_splines"] = 1 - val_no_splines;
+    config["tech_str"] = tech_str;
+    config["dataset_title_str"] = dataset_title_str;
+    config["trend_axisbox2_height_mean"] = 18;
+    config["trend_axisbox2_height_sigma"] = 18;
+    config["trend_axisbox2_map_mean"] = Associative Array();
+    config["trend_axisbox2_map_sigma"] = Associative Array();
+
+    // Fixed NCD source path.
+    path = path_ncd;
+    Debug_Trace( "Resolved source path: " || Char( path ) );
+    If( !File Exists( path ),
+        Debug_Trace( "Source path missing/unreadable: " || Char( path ) );
+        Throw( "Missing source CSV: " || Char( path ) );
+    );
+
+    // Apply close reports/windows BEFORE opening new data.
+    // Use a manual loop instead of Close All("Reports") so the input dialog survives.
+    If(val_cb_close_reports_and_windows == 1,
+        For Each({win_obj}, Get Window List(),
+            If(win_obj != dlg_win,
+                Try(win_obj << Close Window("NoSave"));
+            );
+        );
+        Close All("Data Tables", "NoSave");
+    );
+
+    dt = Open(path); 
+    dt = Current Data Table();
+    config["dt"] = dt;
+
+    // ALLSTATS-only mode for NCD reporting.
+    config["ycol0"] = "ALLSTATS_MEAN_DTT_VALUE";
+    config["ycol2"] = "ALLSTATS_SIGMA_DTT_VALUE";
+    data_type_str = "ALLSTATS";
+    config["no_limits"] = 0;
+    config["measure_label"] = "DTT";
+
+    // ---- Target regime filter (current target only) ----
+    If( val_current_target_only == 1,
+        Apply_Target_Regime_Filter( dt );
+    );
+
+    // APC filtering intentionally removed for NCD chamber reporting.
+
+    // ---- Data quality filters ----
+    If( val_include_nonstd != 1,
+        dt << Select Where( :ALLSTATS_STANDARD_FLAG == "N" );
+        dt << Delete Rows;
+        dt << Clear Select;
+    );
+    If( val_include_nonvalid != 1,
+        dt << Select Where( :ALLSTATS_VALID_FLAG == "N" );
+        dt << Delete Rows;
+        dt << Clear Select;
+    );
+
+    // Shared x-axis window for all time-trend charts (MEAN/APC/SIGMA).
+    time_axis_min = Col Min( :DATA_COLLECTION_TIME );
+    time_axis_max = Col Max( :DATA_COLLECTION_TIME );
+    If( !Is Missing( time_axis_min ) & !Is Missing( time_axis_max ),
+        time_axis_min = time_axis_min - In Days( 1 );
+        time_axis_max = time_axis_max + In Days( 1 );
+    );
+    config["time_axis_min"] = time_axis_min;
+    config["time_axis_max"] = time_axis_max;
+    Debug_Trace( "Shared time axis min=" || Char( time_axis_min ) || " max=" || Char( time_axis_max ) );
+
+    // chamber_list is already set from dialog selection above
+    dt << New Column( "CHAMBER",Character,Set Each Value(If(Contains( chamber_list, :SUBENTITY ),:SUBENTITY,"FLEET")));
+
+    // Color or mark by column
+    dt << Color or Mark by Column(:CHAMBER,Color Theme( "JMP Vibrant"(1) ),Marker Theme( "Solid" ),Continuous Scale( 0 ));
+
+    // Then override FLEET rows to black
+    dt << Select Where(:CHAMBER == "FLEET");
+    dt << Colors(Black);
+    dt << Markers(Dot);
+    dt << Select Where(:CHAMBER != "FLEET");
+
+    // Update window title to replace "Report" with data type
+    updated_window_title = Substitute(config["window_title"], "Report", data_type_str);
+    // ALLSTATS DTT only.
+    dt << Set Name(selected_member || " - " || updated_window_title || " Data"); 
+    dt << Set Label Columns( :SPC_LOT );
+
+    // Use ALLSTATS_PARAMETER_NAME as grouping key (replaces WEC_LAYER).
+    unique_layers = Associative Array( dt:ALLSTATS_PARAMETER_NAME ) << Get Keys;	
+    single_layer_key = "";
+    If( N Items( unique_layers ) == 1,
+        single_layer_key = Normalize_Layer_Key( unique_layers[1] );
+        Debug_Trace( "single by-layer key=" || single_layer_key );
+    );
+    recent_limits_mdttucl= Associative Array();
+    recent_limits_mdttcl= Associative Array();
+    recent_limits_mdttlcl= Associative Array();
+    recent_limits_sdttucl= Associative Array();
+    recent_limits_sdttcl= Associative Array();
+    recent_limits_sdttlcl= Associative Array();
+    
+    For( i = 1, i <= N Items( unique_layers ), i++,
+        current_layer = unique_layers[i];
+        rows= dt << Get Rows Where( :ALLSTATS_PARAMETER_NAME == current_layer ); 
+        If( N Items( rows ) == 0,
+            Continue();
+        );
+        current_layer_key = Normalize_Layer_Key( current_layer );
+        first_row_for_layer=rows[1];
+        recent_limits_mdttucl[current_layer_key]=dt:STATISTICS_MEAN_DTT_UCL[first_row_for_layer];	
+        recent_limits_mdttcl[current_layer_key]=dt:STATISTICS_MEAN_DTT_CENTERLINE[first_row_for_layer];	
+        recent_limits_mdttlcl[current_layer_key]=dt:STATISTICS_MEAN_DTT_LCL[first_row_for_layer];	
+        recent_limits_sdttucl[current_layer_key]=dt:STATISTICS_SIGMA_DTT_UCL[first_row_for_layer];	
+        recent_limits_sdttcl[current_layer_key]=dt:STATISTICS_SIGMA_DTT_CENTERLINE[first_row_for_layer];	
+        recent_limits_sdttlcl[current_layer_key]=dt:STATISTICS_SIGMA_DTT_LCL[first_row_for_layer];	
+    );
+
+    // Add limits to config for functions
+    config["recent_limits_mdttucl"] = recent_limits_mdttucl;
+    config["recent_limits_mdttcl"] = recent_limits_mdttcl;
+    config["recent_limits_mdttlcl"] = recent_limits_mdttlcl;
+    config["recent_limits_sdttucl"] = recent_limits_sdttucl;
+    config["recent_limits_sdttcl"] = recent_limits_sdttcl;
+    config["recent_limits_sdttlcl"] = recent_limits_sdttlcl;
+    config["single_layer_key"] = single_layer_key;
+
+    // Extract frequently used config values
+    ycol0 = config["ycol0"];
+    ycol1 = config["ycol1"];
+    ycol2 = config["ycol2"];
+    ycol3 = config["ycol3"];
+    ycol4 = config["ycol4"];
+    val_show_splines = config["show_splines"];
+    vcol1 = config["vcol1"];
+    vcol2 = config["vcol2"];
+    vcol3 = config["vcol3"];
+    bycol1 = config["bycol1"];
+    xcol = config["xcol"];
+    legendcol1 = config["legendcol1"];
+    //legendcol2 = config["legendcol2"];
+    filter_str = config["filter_str"];
+
+    copy_button_list_mean = V List Box();
+    copy_button_panel_mean = Outline Box( "COPY MEAN", copy_button_list_mean );
+    copy_button_list_sigma = V List Box();
+    copy_button_panel_sigma = Outline Box( "COPY SIGMA", copy_button_list_sigma );
+
+    config["copy_button_list_mean"] = copy_button_list_mean;
+    config["copy_button_list_sigma"] = copy_button_list_sigma;
+
+    copy_button_list_mean_runtime = copy_button_list_mean;
+    copy_layer_boxes_mean_runtime = Associative Array();
+    copy_layer_label_boxes_mean_runtime = Associative Array();
+    copy_button_list_sigma_runtime = copy_button_list_sigma;
+    copy_layer_boxes_sigma_runtime = Associative Array();
+    copy_layer_label_boxes_sigma_runtime = Associative Array();
+
+    // Create the main window
+    Debug_Trace( "Building report window start" );
+    SDTT_win=New Window(selected_member || " - " || updated_window_title,
+        lb = V List Box(
+            myTitle = "ALL PRODUCTS "||filter_str;
+
+            V List Box(		
+                ///////////////////////////////////////////////////////////////////////////////
+                //INFO BOX ////////////////////////////////////////////////////////////////////
+                ///////////////////////////////////////////////////////////////////////////////	
+                Debug_Trace( "Building distributions" );
+                dt << FitGroup(
+                    dt << Distribution(Stack( 1 ),Arrange in Rows( 7 ),
+                        Nominal Distribution(Column( :TEST_NAME ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :LOT_TYPE ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :PROD_MOP_PILOT ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :PRODUCT ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :ROUTE ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :SPC_PILOT_NAME ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Title("LOTS"),SendToReport(Dispatch({},"LOTS",OutlineBox,{Close( 1 )})),
+                    ),
+                            
+                    dt << Distribution(Stack( 1 ),Arrange in Rows( 6 ),
+                        Nominal Distribution(Column( :ALLSTATS_PARAMETER_NAME ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :WEC_ALIAS ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :WEC_OPERATION ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :AME_ETCH ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :SUBENTITY ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :WEC_RECIPE ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Title("WEC"),SendToReport(Dispatch({},"WEC",OutlineBox,{Close( 1 )})), 
+                    ),
+                
+                    dt << Distribution(Stack( 1 ),Arrange in Rows( 6 ),		
+                        Nominal Distribution(Column( :SPC_ALIAS ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),			
+                        Nominal Distribution(Column( :SPC_OPERATION ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :PRIMARY_ENTITY ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :ANALYTICAL_ENTITY ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :MEASUREMENT_SET_NAME ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),
+                        Nominal Distribution(Column( :ALLSTATS_STANDARD_FLAG ),Frequencies( 0 ),Horizontal Layout( 1 ),Count Axis( 1 ),Vertical( 1 )),			
+                        Title("SPC"), ,SendToReport(Dispatch({},"SPC",OutlineBox,{Close( 1 )})), 
+                    ),
+                    SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( "DISTRIBUTIONS" ), Close ( 0 ) })), <<{Arrange in Rows( 3 )}
+                );,
+
+                ///////////////////////////////////////////////////////////////////////////////
+                //SUM TREND AND VAR CHART FIT GROUPS///////////////////////////////////////////
+                ///////////////////////////////////////////////////////////////////////////////
+                Debug_Trace( "Building all-layer trend" );
+				H List Box(
+					all="ALL";	mean="MEAN";sigma="SIGMA";apc="APC";target="TARGET";dtt="DTT";
+					fg_trend_dtt_mean_all= dt << FitGroup(
+						trend_dtt_mean_all=Bivariate(Y( Column( ycol0)),X( Column ( xcol ) )),
+						SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" DTT"), Close ( 0 ) })),
+					);
+					Format_Trend_Charts(trend_dtt_mean_all,all,config);, 
+                    Debug_Trace( "Building all-layer trend complete" );
+					
+					// Add Data Filter
+					dt << Data Filter(	Location( {0, 0} ),	Width( 800 ), Add Filter(	columns( :DATA_COLLECTION_TIME, :CHAMBER )));
+
+				), //H List Box end
+
+
+                Debug_Trace( "Building per-parameter charts" );
+                H List Box(
+                    copy_button_panel_mean,
+                    Debug_Trace( "per-parameter: trend mean start" );
+                    trend_dtt_mean = .;
+                    // Fallback order: By+GroupBy -> By only -> no By
+                    Try(
+                        fg_trend_dtt_mean= dt << FitGroup(
+                            trend_dtt_mean=Bivariate(Y( Column( ycol0)),X( Column ( xcol ) ),By( Column ( bycol1 )),
+                                GroupBy( Column( legendcol1) ),
+                            ),
+                            SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" DTT BY "||bycol1 ), Close ( 0 ) })),
+                        );
+                        Debug_Trace( "per-parameter: trend mean mode=by+group" );
+                    ,
+                        Try(
+                            fg_trend_dtt_mean= dt << FitGroup(
+                                trend_dtt_mean=Bivariate(Y( Column( ycol0)),X( Column ( xcol ) ),By( Column ( bycol1 ))),
+                                SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" DTT BY "||bycol1 ), Close ( 0 ) })),
+                            );
+                            Debug_Trace( "per-parameter: trend mean mode=by" );
+                        ,
+                            fg_trend_dtt_mean= dt << FitGroup(
+                                trend_dtt_mean=Bivariate(Y( Column( ycol0)),X( Column ( xcol ) )),
+                                SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" DTT" ), Close ( 0 ) })),
+                            );
+                            Debug_Trace( "per-parameter: trend mean mode=single" );
+                        );
+                    );
+                    If( Is Scriptable( trend_dtt_mean ),
+                        If(val_show_splines == 1,
+                            Try( trend_dtt_mean << Fit Spline(0.1, Standardized, {Report( 0 ), Line Width( 0.1)}) );
+                        );
+                        Try( Format_Trend_Charts(trend_dtt_mean,mean,config) );
+                    );,
+                    Debug_Trace( "per-parameter: trend mean done" );
+
+                    // APC B_TOOL trend removed for NCD reporting.
+
+                    Debug_Trace( "per-parameter: var mean chamber start" );
+                    var_dtt_mean = .;
+                    Try(
+                        fg_var_dtt_mean= dt << FitGroup(
+                            var_dtt_mean = dt << Variability Chart(
+                                Y( Column( ycol0) ),X( Column ( vcol1 )),
+                                By ( Column( bycol1)) , Connect Cell Means(1), Show Cell Means(1), Show Box Plots(1)
+                            ),
+                            SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" DTT BY "||bycol1 ), Close ( 0 ) })), 
+                        );
+                        Debug_Trace( "per-parameter: var mean chamber mode=by" );
+                    ,
+                        fg_var_dtt_mean= dt << FitGroup(
+                            var_dtt_mean = dt << Variability Chart(
+                                Y( Column( ycol0) ),X( Column ( vcol1 )),
+                                Connect Cell Means(1), Show Cell Means(1), Show Box Plots(1)
+                            ),
+                            SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" DTT" ), Close ( 0 ) })), 
+                        );
+                        Debug_Trace( "per-parameter: var mean chamber mode=single" );
+                    );
+                    If( Is Scriptable( var_dtt_mean ),
+                        Try( Format_Variability_Charts(var_dtt_mean,mean,dtt,1,config,vcol1,"VarCHAM") );
+                    );,
+                    Debug_Trace( "per-parameter: var mean chamber done" );
+                    
+                    If(N Items(chamber_list) == 1,
+                        Debug_Trace( "per-parameter: var mean prod single start" );
+                        // Single chamber - use two X columns
+                        var_dtt_mean_prod = .;
+                        Try(
+                            fg_var_dtt_mean_prod = dt << FitGroup(
+                                var_dtt_mean_prod = dt << Variability Chart(
+                                    Y( Column( ycol0) ),
+                                    X( Column( vcol2 ), Column( vcol1 )),
+                                    By ( Column( bycol1)) , 
+                                    Connect Cell Means(1), 
+                                    Show Cell Means(1), 
+                                    Show Box Plots(1)
+                                ),
+                                SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" DTT BY "||bycol1 ), Close ( 0 ) })), 
+                            );
+                            Debug_Trace( "per-parameter: var mean prod single mode=by" );
+                        ,
+                            fg_var_dtt_mean_prod = dt << FitGroup(
+                                var_dtt_mean_prod = dt << Variability Chart(
+                                    Y( Column( ycol0) ),
+                                    X( Column( vcol2 ), Column( vcol1 )),
+                                    Connect Cell Means(1), 
+                                    Show Cell Means(1), 
+                                    Show Box Plots(1)
+                                ),
+                                SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" DTT" ), Close ( 0 ) })), 
+                            );
+                            Debug_Trace( "per-parameter: var mean prod single mode=single" );
+                        );
+                        If( Is Scriptable( var_dtt_mean_prod ),
+                            Try( Format_Variability_Charts(var_dtt_mean_prod,mean,dtt,2,config,vcol2,"VarPROD") );
+                        );
+                        Debug_Trace( "per-parameter: var mean prod single done" );
+                    ,
+                        Debug_Trace( "per-parameter: var mean prod multi start" );
+                        // Multiple chambers - use single X column (current implementation)
+                        var_dtt_mean_prod = .;
+                        Try(
+                            fg_var_dtt_mean_prod = dt << FitGroup(
+                                var_dtt_mean_prod = dt << Variability Chart(
+                                    Y( Column( ycol0) ),
+                                    X( Column ( vcol2 )),
+                                    By ( Column( bycol1)) , 
+                                    Connect Cell Means(1), 
+                                    Show Cell Means(1), 
+                                    Show Box Plots(1)
+                                ),
+                                SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" DTT BY "||bycol1 ), Close ( 0 ) })), 
+                            );
+                            Debug_Trace( "per-parameter: var mean prod multi mode=by" );
+                        ,
+                            fg_var_dtt_mean_prod = dt << FitGroup(
+                                var_dtt_mean_prod = dt << Variability Chart(
+                                    Y( Column( ycol0) ),
+                                    X( Column ( vcol2 )),
+                                    Connect Cell Means(1), 
+                                    Show Cell Means(1), 
+                                    Show Box Plots(1)
+                                ),
+                                SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" DTT" ), Close ( 0 ) })), 
+                            );
+                            Debug_Trace( "per-parameter: var mean prod multi mode=single" );
+                        );
+                        If( Is Scriptable( var_dtt_mean_prod ),
+                            Try( Format_Variability_Charts(var_dtt_mean_prod,mean,dtt,1,config,vcol2,"VarPROD") );
+                        );
+                        Debug_Trace( "per-parameter: var mean prod multi done" );
+                    );
+                    
+                    Debug_Trace( "per-parameter: var mean target start" );
+                    var_dtt_mean_tar = .;
+                    Try(
+                        fg_var_dtt_mean_tar= dt << FitGroup(
+                            var_dtt_mean_tar = dt << Variability Chart(
+                                Y( Column( ycol3) ),X( Column ( vcol3 )),
+                                By ( Column( bycol1)) , Connect Cell Means(1), Show Cell Means(1), Show Box Plots(1)
+                            ),
+                            SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" TARGET BY "||bycol1 ), Close ( 0 ) })), 
+                        );
+                        Debug_Trace( "per-parameter: var mean target mode=by" );
+                    ,
+                        fg_var_dtt_mean_tar= dt << FitGroup(
+                            var_dtt_mean_tar = dt << Variability Chart(
+                                Y( Column( ycol3) ),X( Column ( vcol3 )),
+                                Connect Cell Means(1), Show Cell Means(1), Show Box Plots(1)
+                            ),
+                            SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( mean||" TARGET" ), Close ( 0 ) })), 
+                        );
+                        Debug_Trace( "per-parameter: var mean target mode=single" );
+                    );
+                    If( Is Scriptable( var_dtt_mean_tar ),
+                        Try( Format_Variability_Charts(var_dtt_mean_tar,mean,target,1,config,vcol3,"VarTAR") );
+                    );,
+                    Debug_Trace( "per-parameter: var mean target done" );
+
+                    If(val_include_sigma == 1,
+                        copy_button_panel_sigma
+                    );,
+
+                    If(val_include_sigma == 1,
+                            Debug_Trace( "per-parameter: trend sigma start" );
+                            trend_dtt_sigma = .;
+                            Try(
+                                fg_trend_dtt_sigma= dt << FitGroup(
+                                    trend_dtt_sigma=Bivariate(Y( Column( ycol2)),X( Column ( xcol ) ),By( Column ( bycol1 )),
+                                        GroupBy( Column( legendcol1) ),
+                                    ),
+                                    SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( sigma||" DTT BY "||bycol1 ), Close ( 0 ) })),
+                                );
+                                Debug_Trace( "per-parameter: trend sigma mode=by+group" );
+                            ,
+                                Try(
+                                    fg_trend_dtt_sigma= dt << FitGroup(
+                                        trend_dtt_sigma=Bivariate(Y( Column( ycol2)),X( Column ( xcol ) ),By( Column ( bycol1 ))),
+                                        SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( sigma||" DTT BY "||bycol1 ), Close ( 0 ) })),
+                                    );
+                                    Debug_Trace( "per-parameter: trend sigma mode=by" );
+                                ,
+                                    fg_trend_dtt_sigma= dt << FitGroup(
+                                        trend_dtt_sigma=Bivariate(Y( Column( ycol2)),X( Column ( xcol ) )),
+                                        SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( sigma||" DTT" ), Close ( 0 ) })),
+                                    );
+                                    Debug_Trace( "per-parameter: trend sigma mode=single" );
+                                );
+                            );
+                            If( Is Scriptable( trend_dtt_sigma ),
+                                If(val_show_splines == 1,
+                                    Try( trend_dtt_sigma << Fit Spline(0.1, Standardized, {Report( 0 ), Line Width( 0.1)}) );
+                                );
+                                Try( Format_Trend_Charts(trend_dtt_sigma,sigma,config) );
+                            );
+                        Debug_Trace( "per-parameter: trend sigma done" );
+                    );, 
+
+                    If(val_include_sigma == 1,
+                        Debug_Trace( "per-parameter: var sigma chamber start" );
+                        fg_var_dtt_sigma= dt << FitGroup(
+                            var_dtt_sigma = dt << Variability Chart(
+                                Y( Column( ycol2) ),X( Column ( vcol1 )),
+                                By ( Column( bycol1)) , Connect Cell Means(1), Show Cell Means(1), Show Box Plots(1)
+                            ),
+                            SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( sigma||" DTT BY "||bycol1 ), Close ( 0 ) })), 
+                        );
+                        Format_Variability_Charts(var_dtt_sigma,sigma,dtt,1,config,vcol1,"VarCHAM");
+                        Debug_Trace( "per-parameter: var sigma chamber done" );
+                    );,
+                    
+                    If(val_include_sigma == 1,
+                        If(N Items(chamber_list) == 1,
+                            Debug_Trace( "per-parameter: var sigma prod single start" );
+                            // Single chamber - use two X columns
+                            var_dtt_sigma_prod = .;
+                            Try(
+                                fg_var_dtt_sigma_prod = dt << FitGroup(
+                                    var_dtt_sigma_prod = dt << Variability Chart(
+                                        Y( Column( ycol2) ),
+                                        X( Column( vcol2 ), Column( vcol1 )),
+                                        By ( Column( bycol1)) , 
+                                        Connect Cell Means(1), 
+                                        Show Cell Means(1), 
+                                        Show Box Plots(1)
+                                    ),
+                                    SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( sigma||" DTT BY "||bycol1 ), Close ( 0 ) })), 
+                                );
+                                Debug_Trace( "per-parameter: var sigma prod single mode=by" );
+                            ,
+                                fg_var_dtt_sigma_prod = dt << FitGroup(
+                                    var_dtt_sigma_prod = dt << Variability Chart(
+                                        Y( Column( ycol2) ),
+                                        X( Column( vcol2 ), Column( vcol1 )),
+                                        Connect Cell Means(1), 
+                                        Show Cell Means(1), 
+                                        Show Box Plots(1)
+                                    ),
+                                    SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( sigma||" DTT" ), Close ( 0 ) })), 
+                                );
+                                Debug_Trace( "per-parameter: var sigma prod single mode=single" );
+                            );
+                            If( Is Scriptable( var_dtt_sigma_prod ),
+                                Try( Format_Variability_Charts(var_dtt_sigma_prod,sigma,dtt,2,config,vcol2,"VarPROD") );
+                            );
+                            Debug_Trace( "per-parameter: var sigma prod single done" );
+                        ,
+                            Debug_Trace( "per-parameter: var sigma prod multi start" );
+                            // Multiple chambers - use single X column (current implementation)
+                            var_dtt_sigma_prod = .;
+                            Try(
+                                fg_var_dtt_sigma_prod = dt << FitGroup(
+                                    var_dtt_sigma_prod = dt << Variability Chart(
+                                        Y( Column( ycol2) ),
+                                        X( Column ( vcol2 )),
+                                        By ( Column( bycol1)) , 
+                                        Connect Cell Means(1), 
+                                        Show Cell Means(1), 
+                                        Show Box Plots(1)
+                                    ),
+                                    SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( sigma||" DTT BY "||bycol1 ), Close ( 0 ) })), 
+                                );
+                                Debug_Trace( "per-parameter: var sigma prod multi mode=by" );
+                            ,
+                                fg_var_dtt_sigma_prod = dt << FitGroup(
+                                    var_dtt_sigma_prod = dt << Variability Chart(
+                                        Y( Column( ycol2) ),
+                                        X( Column ( vcol2 )),
+                                        Connect Cell Means(1), 
+                                        Show Cell Means(1), 
+                                        Show Box Plots(1)
+                                    ),
+                                    SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( sigma||" DTT" ), Close ( 0 ) })), 
+                                );
+                                Debug_Trace( "per-parameter: var sigma prod multi mode=single" );
+                            );
+                            If( Is Scriptable( var_dtt_sigma_prod ),
+                                Try( Format_Variability_Charts(var_dtt_sigma_prod,sigma,dtt,1,config,vcol2,"VarPROD") );
+                            );
+                            Debug_Trace( "per-parameter: var sigma prod multi done" );
+                        );
+                        
+                        Debug_Trace( "per-parameter: var sigma target start" );
+                        var_dtt_sigma_tar = .;
+                        Try(
+                            fg_var_dtt_sigma_tar= dt << FitGroup(
+                                var_dtt_sigma_tar = dt << Variability Chart(
+                                    Y( Column( ycol4) ),X( Column ( vcol3 )),
+                                    By ( Column( bycol1)) , Connect Cell Means(1), Show Cell Means(1), Show Box Plots(1)
+                                ),
+                                SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( sigma||" TARGET BY "||bycol1 ), Close ( 0 ) })), 
+                            );
+                            Debug_Trace( "per-parameter: var sigma target mode=by" );
+                        ,
+                            fg_var_dtt_sigma_tar= dt << FitGroup(
+                                var_dtt_sigma_tar = dt << Variability Chart(
+                                    Y( Column( ycol4) ),X( Column ( vcol3 )),
+                                    Connect Cell Means(1), Show Cell Means(1), Show Box Plots(1)
+                                ),
+                                SendToReport(Dispatch( {}, "Fit Group", OutlineBox, {Set Title( sigma||" TARGET" ), Close ( 0 ) })), 
+                            );
+                            Debug_Trace( "per-parameter: var sigma target mode=single" );
+                        );
+                        If( Is Scriptable( var_dtt_sigma_tar ),
+                            Try( Format_Variability_Charts(var_dtt_sigma_tar,sigma,target,1,config,vcol3,"VarTAR") );
+                        );
+                        Debug_Trace( "per-parameter: var sigma target done" );
+                    );,
+                )
+            ), 
+        )		 
+    ); 
+    Debug_Trace( "Building report window complete" );
+
+    // HCCD parity: align rows only after full window layout has completed.
+    Wait( 0 );
+    Try( Equalize_Var_FrameBox_Heights( "MEAN", {var_dtt_mean, var_dtt_mean_prod, var_dtt_mean_tar}, var_frame_height_boost ) );
+    Try( Align_ByGroup_Row_Heights( "MEAN", trend_dtt_mean, var_dtt_mean, 0 ) );
+    Try( Align_ByGroup_Row_Heights( "MEAN", trend_dtt_mean, var_dtt_mean_prod, 0 ) );
+    Try( Align_ByGroup_Row_Heights( "MEAN", trend_dtt_mean, var_dtt_mean_tar, 0 ) );
+    Try( Align_Copy_Outline_Heights( "MEAN", trend_dtt_mean, "MEAN" ) );
+    If( val_include_sigma == 1,
+        Try( Equalize_Var_FrameBox_Heights( "SIGMA", {var_dtt_sigma, var_dtt_sigma_prod, var_dtt_sigma_tar}, var_frame_height_boost ) );
+        Try( Align_ByGroup_Row_Heights( "SIGMA", trend_dtt_sigma, var_dtt_sigma, 0 ) );
+        Try( Align_ByGroup_Row_Heights( "SIGMA", trend_dtt_sigma, var_dtt_sigma_prod, 0 ) );
+        Try( Align_ByGroup_Row_Heights( "SIGMA", trend_dtt_sigma, var_dtt_sigma_tar, 0 ) );
+        Try( Align_Copy_Outline_Heights( "SIGMA", trend_dtt_sigma, "SIGMA" ) );
+    );
+
+    // Then override FLEET rows to black
+    dt << Select Where(:CHAMBER == "FLEET");
+    dt << Colors(Gray);
+    dt << Select Where(:CHAMBER != "FLEET");
+
+    // Maximize the window after creation
+    SDTT_win << Maximize Window;
+
+    Show("Data processing completed for: ", selected_member);
+);
+
+// ============================================================
+// PERSISTENT USER INPUT DIALOG
+// ============================================================
+Run_Generate_Report = Function( {},
+    Debug_Trace( "Run_Generate_Report click start" );
+
+    // Get current values from dialog
+    val_cb_close_reports_and_windows = cb_close_reports_and_windows << Get;
+    val_include_sigma = cb_include_sigma << Get;
+    val_no_splines = cb_no_splines << Get;
+    val_current_target_only = cb_current_target_only << Get;
+    val_include_nonstd   = cb_include_nonstd   << Get;
+    val_include_nonvalid = cb_include_nonvalid << Get;
+    val_dataset_choice = 1;
+    val_chamber_index = rbChamber << Get;
+    Debug_Trace(
+        "Inputs dataset_choice=" || Char( val_dataset_choice ) ||
+        " data_type=ALLSTATS"
+    );
+
+    // Resolve chamber override
+    picker_raw_d1v = subentity_picker_lb_d1v << Get Selected;
+    picker_selection_d1v = Normalize_Subentity_Selection( picker_raw_d1v, subentity_picker_visible_d1v );
+    picker_raw_f32 = subentity_picker_lb_f32 << Get Selected;
+    picker_selection_f32 = Normalize_Subentity_Selection( picker_raw_f32, subentity_picker_visible_f32 );
+
+    picker_selection = picker_selection_d1v;
+    For( i = 1, i <= N Items( picker_selection_f32 ), i++,
+        Insert Into( picker_selection, picker_selection_f32[i] );
+    );
+    If( N Items( picker_selection ) > 0,
+        picker_selection = Associative Array( picker_selection ) << Get Keys;
+        Sort List( picker_selection );
+    );
+    Debug_Trace( "Picker selection count=" || Char( N Items( picker_selection ) ) );
+
+    If( N Items( picker_selection ) > 0,
+        subentity_picker_selected = picker_selection;
+        chamber_list = subentity_picker_selected;
+        selected_member = "CUSTOM PICKER: " || Char( N Items( chamber_list ) ) || " SUBENTITY";
+    ,
+        SUBENTITY_STR = Trim(SUBENTITY_TB << Get Text());
+        If(SUBENTITY_STR != "",
+            chamber_list = Words(SUBENTITY_STR, ",");
+            For(i = 1, i <= N Items(chamber_list), i++,
+                chamber_list[i] = Trim(chamber_list[i]);
+            );
+            selected_member = "CUSTOM: " || SUBENTITY_STR;
+        ,
+            ENTITY_STR = Trim(ENTITY_TB << Get Text());
+            PM_STR = Trim(PM_TB << Get Text());
+            If(ENTITY_STR != "" & PM_STR != "",
+                CHAMBER_STR = "AME4" || ENTITY_STR || "_PM" || PM_STR;
+                chamber_list = {};
+                Insert Into(chamber_list, CHAMBER_STR);
+                selected_member = "CUSTOM: " || CHAMBER_STR;
+            ,
+                chamber_list = chamber_data[val_chamber_index][2];
+                selected_member = chamber_data[val_chamber_index][1];
+            );
+        );
+    );
+    Debug_Trace( "Resolved chamber_list count=" || Char( N Items( chamber_list ) ) || " selected_member=" || selected_member );
+
+    // Call the data processing function
+    Try(
+        Debug_Trace( "Calling ProcessSDTTData" );
+        ProcessSDTTData(val_cb_close_reports_and_windows, chamber_list, selected_member, val_include_sigma, val_no_splines, dialog_window, val_current_target_only, val_include_nonstd, val_include_nonvalid);
+        Debug_Trace( "Run_Generate_Report click success" );
+    ,
+        Debug_Trace( "Run_Generate_Report click failure" );
+        Show( "CHAMBER_DISPO_ERROR", "Generate Report failed", "dataset_choice", val_dataset_choice, "selected_member", selected_member );
+        Throw();
+    );
+);
+
+dialog_window = New Window( "NCD Report Options", 
+    V List Box(
+        H List Box(
+            V List Box(
+                Panel Box("Tool Owner",
+                    rbChamber = Radio Box( {"Trey", "Kayden", "Chang", "Adi", "Travis", "Tyler", "Mathius", "Sashank", "William", "Minog"} ),
+                ),
+                Text Box("Dataset: 1278 D1V NCD MT6 (fixed)")
+            ),
+            V List Box(
+                Panel Box("SINGLE SUBENTITY & LIST OVERRIDE",
+                    Lineup Box(N Col(7),
+                        Text Box( "AME4" ), ENTITY_TB = Text Edit Box( "", <<Set Width( 25 ) ),
+                        Text Box( "_PM" ), PM_TB = Text Edit Box( "", <<Set Width( 12 ) ),
+                        Spacer Box(Size(10, 10)),
+                        Text Box( "  — or full SUBENTITY:" ), SUBENTITY_TB = Text Edit Box( "", <<Set Width( 100 ) ),
+                    ),
+                ),
+                H List Box(
+                    Panel Box("SUBENTITY FORM OVERRIDE",
+                        V List Box(
+                            subentity_tab_box = Tab Box(
+                                "D1V",
+                                V List Box(
+                                    H List Box(
+                                        SUBENTITY_FILTER_TB_D1V = Text Edit Box( "", <<Set Width( 90 ) ),
+                                        Button Box( "Search",
+                                            filter_text = SUBENTITY_FILTER_TB_D1V << Get Text;
+                                            subentity_picker_visible_d1v = Filter_Subentity_Fleet_List( subentity_fleet_d1v, filter_text );
+                                            subentity_picker_lb_d1v << Set Items( subentity_picker_visible_d1v );
+                                        )
+                                    ),
+                                    subentity_picker_lb_d1v = List Box( subentity_picker_visible_d1v, Max Selected( 200 ) ),
+                                    subentity_picker_lb_d1v << Set N Lines( 8 ),
+                                    subentity_picker_lb_d1v << Set Width( 125 ),
+                                    subentity_picker_lb_d1v << Set Height( 160 )
+                                ),
+                                "F32",
+                                V List Box(
+                                    H List Box(
+                                        SUBENTITY_FILTER_TB_F32 = Text Edit Box( "", <<Set Width( 90 ) ),
+                                        Button Box( "Search",
+                                            filter_text = SUBENTITY_FILTER_TB_F32 << Get Text;
+                                            subentity_picker_visible_f32 = Filter_Subentity_Fleet_List( subentity_fleet_f32, filter_text );
+                                            subentity_picker_lb_f32 << Set Items( subentity_picker_visible_f32 );
+                                        )
+                                    ),
+                                    subentity_picker_lb_f32 = List Box( subentity_picker_visible_f32, Max Selected( 200 ) ),
+                                    subentity_picker_lb_f32 << Set N Lines( 8 ),
+                                    subentity_picker_lb_f32 << Set Width( 125 ),
+                                    subentity_picker_lb_f32 << Set Height( 160 )
+                                )
+                            ),
+                            H List Box(
+                                Button Box( "Clear Selected",
+                                    subentity_picker_selected = {};
+                                    subentity_picker_lb_d1v << Set Items( subentity_picker_visible_d1v );
+                                    subentity_picker_lb_f32 << Set Items( subentity_picker_visible_f32 );
+                                )
+                            )
+                        )
+                    ),
+                    V List Box(
+                        Panel Box("OPTIONS",
+                            V List Box(
+							cb_close_reports_and_windows = Check Box( "Close Reports & Windows" ),
+                                cb_include_sigma = Check Box( "Include Sigma Charts" ),
+                                cb_no_splines = Check Box( "No Splines" ),
+                                cb_current_target_only = Check Box( "Current Target Only" ),
+                            ),
+                        ),
+                        Panel Box("DATA QUALITY",
+                            V List Box(
+                                cb_include_nonstd   = Check Box( "Include Non-Standard" ),
+                                cb_include_nonvalid = Check Box( "Include Non-Valid" ),
+                            ),
+                        ),
+                        Text Box("Mode: ALLSTATS only"),
+                        H List Box(
+                            Button Box( "Generate Report",
+                                Run_Generate_Report();
+                            ),
+                            Button Box( "Close Dialog",
+                                dialog_window << Close Window;
+                            )
+                        )
+                    )
+                )
+            ) // H List Box (buttons)
+        ), // V List Box (right column)
+    ), // H List Box (top-level left/right split)
+);
+
+
+// Usage tracking - final version
+log_path = "\\orshfs.intel.com\ORAnalysis$\1276_MAODATA\Config\etch\AME\tbatson\backups\sDTT_Chamber_Dispo_log.txt";
+usage_tracking_enabled = 0;
+
+track_usage = Function({},
+    If( usage_tracking_enabled != 1,
+        Return();
+    );
+
+    Try(
+        timestamp = Char(Today());
+        log_entry = timestamp || " - Script usage" || "\n";
+        
+        // Check if file exists to append or create
+        If(File Exists(log_path),
+            current_content = Load Text File(log_path);
+            new_content = current_content || log_entry;
+            Save Text File(log_path, new_content);
+        ,
+            Save Text File(log_path, log_entry);
+        );
+    ,
+        // Silent fail if there are any issues
+    );
+);
+
+// Call this at the beginning of your main script
+track_usage();
